@@ -7122,6 +7122,35 @@ function init() {
   try { setSpeed(parseFloat(localStorage.getItem('umbrella_speed') || '1')); } catch (e) {}
   try { loadCustomCover(); } catch (e) {}
   try { renderRecent(); } catch (e) {}
+  checkForApplicationUpdate();
+}
+
+async function checkForApplicationUpdate() {
+  try {
+    const update = await request('/update', { timeout: 10000 });
+    if (!update || update.version === undefined || update.available === false) return;
+    const banner = $('#updateBanner');
+    if (!banner) return;
+    const title = $('#updateTitle');
+    const notes = $('#updateNotes');
+    if (title) title.textContent = `Доступна версия ${update.version}`;
+    if (notes) notes.textContent = update.releaseNotes || 'Доступно обновление приложения';
+    banner.hidden = false;
+    $('#updateLater')?.addEventListener('click', () => { banner.hidden = true; }, { once: true });
+    $('#updateApply')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = 'Подготовка…';
+      try {
+        await request('/update/apply', { method: 'POST', timeout: 15000 });
+        document.body.innerHTML = '<div style="display:grid;place-items:center;height:100vh;color:#f5f5f7;font-family:Inter,system-ui,sans-serif;background:#08080c"><div style="text-align:center"><h1 style="font-size:28px;margin-bottom:12px">Приложение обновляется</h1><p style="color:#858890;font-size:14px">Окно запустится снова автоматически</p></div></div>';
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = 'Обновить';
+        toast(error.message || 'Не удалось запустить обновление', 'error');
+      }
+    }, { once: true });
+  } catch (e) { /* update checks must never block startup */ }
 }
 
 let _booted = false;

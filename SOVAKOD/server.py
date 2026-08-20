@@ -22,6 +22,8 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse, urlencode, quote as urlquote
+from app_version import APP_VERSION
+from app_updater import fetch_update, launch_update
 
 try:
     import yt_dlp
@@ -429,6 +431,10 @@ class AppHandler(SimpleHTTPRequestHandler):
         if route == "/api/session":
             self.send_json({"token": API_TOKEN})
             return
+        if route == "/api/update":
+            update = fetch_update()
+            self.send_json(update or {"version": APP_VERSION, "available": False})
+            return
         if route == "/api/sc/library":
             self.handle_sc_library()
             return
@@ -446,6 +452,10 @@ class AppHandler(SimpleHTTPRequestHandler):
             if not self._authorized():
                 return
             self.handle_shutdown()
+        elif parsed.path == "/api/update/apply":
+            if not self._authorized():
+                return
+            self.handle_update_apply()
         elif parsed.path == "/api/sc/download":
             body = self.read_json()
             if body is not None:
@@ -1221,6 +1231,15 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.send_json({"ok": True, "message": "Сервер останавливается"})
         SERVER_STOPPING.set()
         threading.Thread(target=self.server.shutdown, daemon=True, name="server-shutdown").start()
+
+    def handle_update_apply(self) -> None:
+        update = fetch_update()
+        if not update or not launch_update(update, log):
+            self.send_json({"error": "Обновление недоступно"}, HTTPStatus.CONFLICT)
+            return
+        self.send_json({"ok": True})
+        SERVER_STOPPING.set()
+        threading.Thread(target=self.server.shutdown, daemon=True, name="server-update-shutdown").start()
 
     def _deezer_get(self, path: str) -> dict | None:
         try:

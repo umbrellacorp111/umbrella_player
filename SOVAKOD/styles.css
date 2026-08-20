@@ -2310,6 +2310,9 @@ body.lib-wide .artist-row { grid-template-columns: repeat(auto-fill, minmax(110p
 .lyrics-instrumental { text-align: center; color: rgba(255, 255, 255, 0.4); padding: 50px 0; font-size: 16px; font-weight: 600; }
 
 /* ---------- Toasts ---------- */
+.update-banner { position: fixed; top: 14px; right: 18px; z-index: 100; display: flex; align-items: center; gap: 18px; max-width: min(560px, calc(100vw - 36px)); padding: 12px 14px; border: 1px solid hsla(var(--dyn-h), 75%, 70%, .28); border-radius: 8px; background: rgba(16, 16, 25, .94); box-shadow: 0 14px 40px rgba(0,0,0,.35); backdrop-filter: blur(16px); }
+.update-banner small { display: block; margin-top: 3px; color: var(--text-3); max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.update-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .toast-stack {
   position: fixed;
   z-index: 9999;
