@@ -41,7 +41,7 @@ jobs:
         run: |
           python -m PyInstaller --onefile --noconsole --name "Umbrella Player Updater" SOVAKOD/updater_main.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Test-Path "dist/Umbrella Player Updater/Umbrella Player Updater.exe")) { throw "Updater output is missing" }
+          if (-not (Test-Path "dist/Umbrella Player Updater.exe")) { throw "Updater output is missing" }
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress -y
@@ -50,8 +50,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force "dist/payload" | Out-Null
           Copy-Item "dist/Umbrella Player.exe" "dist/payload/"
-          Copy-Item "dist/Umbrella Player Updater/Umbrella Player Updater.exe" "dist/payload/"
-          Copy-Item "dist/Umbrella Player Updater/Umbrella Player Updater.exe" "dist/"
+          Copy-Item "dist/Umbrella Player Updater.exe" "dist/payload/"
       - name: Build installer
         shell: pwsh
         run: iscc installer/UmbrellaPlayer.iss
