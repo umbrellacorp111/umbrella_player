@@ -23,13 +23,25 @@ jobs:
           python -m pip install -r SOVAKOD/requirements.txt pyinstaller
       - name: Validate sources
         shell: pwsh
-        run: python -m py_compile SOVAKOD/*.py
+        run: |
+          $files = Get-ChildItem -LiteralPath "SOVAKOD" -Filter "*.py" -File
+          if (-not $files) { throw "No Python source files found" }
+          foreach ($file in $files) {
+            python -m py_compile $file.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Build application
         shell: pwsh
-        run: python -m PyInstaller "Umbrella Player.spec" --noconfirm --clean
+        run: |
+          python -m PyInstaller "Umbrella Player.spec" --noconfirm --clean
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "dist/Umbrella Player.exe")) { throw "PyInstaller output is missing" }
       - name: Build updater
         shell: pwsh
-        run: python -m PyInstaller --onefile --noconsole --name "Umbrella Player Updater" SOVAKOD/updater_main.py
+        run: |
+          python -m PyInstaller --onefile --noconsole --name "Umbrella Player Updater" SOVAKOD/updater_main.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "dist/Umbrella Player Updater/Umbrella Player Updater.exe")) { throw "Updater output is missing" }
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress -y
