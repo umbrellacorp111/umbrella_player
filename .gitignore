@@ -1,0 +1,41 @@
+# Python cache and local environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# PyInstaller/build output
+build/
+dist/
+*.spec.bak
+
+# Runtime data, browser profiles and downloaded media
+**/user_data/
+**/_yt_cache/
+**/_sc_cache/
+**/sc_music/
+*.part
+*.ytdl
+
+# Logs and temporary diagnostics
+*.log
+*.log.*
+*.tmp
+*.temp
+syntax_*.txt
+server_*.txt
+
+# Local IDE/OS files
+.idea/
+.vscode/
+*.suo
+*.user
+Thumbs.db
+desktop.ini
+
+# Test/runtime leftovers
+SOVAKOD/probe_*.py

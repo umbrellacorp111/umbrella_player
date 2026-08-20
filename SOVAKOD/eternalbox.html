@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Eternalbox</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;overflow:hidden;font-family:sans-serif}
+iframe{width:100vw;height:100vh;border:none;display:block}
+.close-btn{position:fixed;top:16px;right:16px;z-index:9999;width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,.65);border:1px solid rgba(255,255,255,.15);color:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);transition:background .2s}
+.close-btn:hover{background:rgba(255,50,50,.7)}
+</style>
+</head>
+<body>
+<button class="close-btn" id="closeBtn" onclick="window.location.href='/'" title="Закрыть">&#10005;</button>
+<iframe id="frame" src="https://eternalbox.floriegl.tech/jukebox_search.html" allow="autoplay"></iframe>
+</body>
+</html>

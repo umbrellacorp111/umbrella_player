@@ -1,0 +1,6 @@
+@echo off
+echo Updating yt-dlp...
+python -m pip install --upgrade yt-dlp
+echo.
+echo Done! Press any key to exit...
+pause >nul
