@@ -100,7 +100,13 @@ YT_URL_CACHE: dict[str, tuple[str, float]] = {}
 YT_URL_TTL = 900  # 15 минут вместо 30 — ссылки YouTube протухают быстрее
 YT_EXTRACT_LOCK = threading.Lock()
 YT_BLOCKED_UNTIL = 0.0
-YT_BLOCK_COOLDOWN = 10 * 60
+YT_BLOCK_COOLDOWN = 2 * 60
+YT_SEARCH_VALIDATE = os.getenv("UMBRELLA_VALIDATE_SEARCH", "0").strip() not in ("0", "false", "False", "")
+CACHE_LOCK = threading.RLock()
+MB_LAST_REQUEST = 0.0
+MB_LOCK = threading.Lock()
+YT_URL_CACHE_LOCK = threading.Lock()
+LYRICS_CACHE_LOCK = threading.Lock()
 LYRICS_CACHE: dict[str, dict] = {}
 LYRICS_TTL = 3600
 AUDIO_FILE_CACHE: dict[str, tuple[str, float]] = {}
@@ -111,7 +117,6 @@ ARTIST_IMG_CACHE: dict[str, tuple[bytes, str, float]] = {}
 ARTIST_IMG_TTL = 86400
 ARTIST_BIO_CACHE: dict[str, tuple[float, dict]] = {}
 ARTIST_BIO_TTL = 86400
-# Одна страница Википедии на артиста: используется и для биографии, и для портрета.
 WIKI_PAGE_CACHE: dict[str, tuple[float, dict]] = {}
 WIKI_PAGE_TTL = 86400
 RELATED_IDS_CACHE: dict[str, tuple[list[str], float]] = {}
@@ -160,8 +165,8 @@ MAX_JSON_BODY = 16_384
 MAX_CACHE_ENTRIES = 512
 MAX_ARTIST_IMAGE_BYTES = 8 * 1024 * 1024
 API_TOKEN = secrets.token_urlsafe(32)
-YT_DLP_LIMIT = threading.BoundedSemaphore(2)
-EXTERNAL_API_LIMIT = threading.BoundedSemaphore(4)
+YT_DLP_LIMIT = threading.BoundedSemaphore(3)
+EXTERNAL_API_LIMIT = threading.BoundedSemaphore(8)
 SC_DOWNLOAD_QUEUE: queue.Queue[dict | None] = queue.Queue(maxsize=8)
 SERVER_STOPPING = threading.Event()
 
@@ -213,6 +218,27 @@ def _trim_cache(cache: dict, timestamp_index: int, limit: int = MAX_CACHE_ENTRIE
         cache.pop(key, None)
 
 
+def _mb_rate_limit() -> None:
+    global MB_LAST_REQUEST
+    with MB_LOCK:
+        now = time.time()
+        wait = MB_LAST_REQUEST + 1.05 - now
+        if wait > 0:
+            time.sleep(wait)
+        MB_LAST_REQUEST = time.time()
+
+
+def _yt_cookies_options() -> dict:
+    for name in ("cookies.txt", "youtube_cookies.txt", "cookies_youtube.txt"):
+        p = APP_DATA_DIR / name
+        if p.is_file() and p.stat().st_size > 0:
+            return {"cookiefile": str(p)}
+    env_cookie = os.getenv("YT_COOKIES_FILE", "").strip()
+    if env_cookie and Path(env_cookie).is_file():
+        return {"cookiefile": env_cookie}
+    return {}
+
+
 def _cleanup_caches() -> None:
     while True:
         time.sleep(300)
@@ -227,12 +253,31 @@ def _cleanup_caches() -> None:
             for key, value in list(cache.items()):
                 timestamp = _cache_timestamp(value, timestamp_index)
                 if timestamp and now - timestamp >= ttl:
+                    if cache is AUDIO_FILE_CACHE or cache is YT_FILE_CACHE:
+                        try:
+                            path = value[0] if isinstance(value, tuple) else ""
+                            if path and os.path.isfile(path):
+                                os.remove(path)
+                        except OSError:
+                            pass
                     cache.pop(key, None)
             _trim_cache(cache, timestamp_index)
         with SC_JOBS_GUARD:
             for key, job in list(SC_JOBS.items()):
                 if job.get("finished") and now - job["finished"] > 900:
                     SC_JOBS.pop(key, None)
+        try:
+            for cache_dir, ttl in ((YT_CACHE_DIR, YT_FILE_TTL), (SC_CACHE_DIR, AUDIO_FILE_TTL)):
+                if not cache_dir.is_dir():
+                    continue
+                for p in cache_dir.iterdir():
+                    try:
+                        if now - p.stat().st_mtime > ttl:
+                            p.unlink()
+                    except OSError:
+                        pass
+        except OSError:
+            pass
 
 
 threading.Thread(target=_cleanup_caches, daemon=True, name="cache-cleanup").start()
@@ -593,26 +638,43 @@ class AppHandler(SimpleHTTPRequestHandler):
                 })
             items.sort(key=lambda item: item.get("_audio_score", 0), reverse=True)
 
-            # Do not expose videos that cannot be played. Extraction is
-            # intentionally sequential: YouTube treats a burst of player API
-            # requests as bot traffic and may block the whole public IP.
-            candidates = items[:min(len(items), max(count + 4, 8))]
-            supported_ids: set[str] = set()
-            for item in candidates:
-                try:
-                    audio_url, _ = self._yt_extract_audio_url(item["videoId"])
-                    if audio_url:
-                        supported_ids.add(item["videoId"])
-                except Exception as error:
-                    message = str(error).lower()
-                    if "login_required" in message or "not a bot" in message or "sign in" in message:
-                        log.warning("YouTube player API is temporarily blocked; stopping search validation")
-                        break
+            if YT_SEARCH_VALIDATE and items and time.time() >= YT_BLOCKED_UNTIL:
+                candidates = items[:min(len(items), max(count + 4, 8))]
 
+                def _probe(item: dict) -> str | None:
+                    try:
+                        audio_url, _ = self._yt_extract_audio_url(item["videoId"])
+                        return item["videoId"] if audio_url else None
+                    except Exception as error:
+                        message = str(error).lower()
+                        if "login_required" in message or "not a bot" in message or "sign in" in message:
+                            raise RuntimeError("bot_block")
+                        return None
+
+                supported_ids: set[str] = set()
+                bot_blocked = False
+                with ThreadPoolExecutor(max_workers=3) as pool:
+                    futures = {pool.submit(_probe, it): it for it in candidates}
+                    for fut in as_completed(futures):
+                        try:
+                            vid = fut.result()
+                            if vid:
+                                supported_ids.add(vid)
+                        except RuntimeError as e:
+                            if str(e) == "bot_block":
+                                bot_blocked = True
+                                for f in futures:
+                                    f.cancel()
+                                break
+                        except Exception:
+                            pass
+                if bot_blocked:
+                    log.warning("YouTube bot-check during search validation — returning unfiltered results")
+                    supported_ids = {it["videoId"] for it in items}
+                elif supported_ids:
+                    items = [it for it in items if it["videoId"] in supported_ids]
             tracks = []
             for item in items:
-                if item["videoId"] not in supported_ids:
-                    continue
                 item.pop("_audio_score", None)
                 tracks.append(item)
                 if len(tracks) >= count:
@@ -755,9 +817,6 @@ class AppHandler(SimpleHTTPRequestHandler):
         if cached and (now - cached[1]) < YT_URL_TTL:
             return cached[0], 0
         ydl_opts = {
-            # YouTube increasingly returns audio-only WebM/Opus from the
-            # Android VR client. Chromium/WebView supports it natively, so
-            # keep it as a valid fallback instead of rejecting the format.
             "format": (
                 "bestaudio[ext=m4a][acodec^=mp4a]/bestaudio[ext=webm]/18/best"
                 if player_client == "android_vr" else "18/best[ext=mp4][acodec^=mp4a]/bestaudio"
@@ -770,13 +829,13 @@ class AppHandler(SimpleHTTPRequestHandler):
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": 20,
-            # Добавляем заголовки для обхода блокировок
             "http_headers": {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-us,en;q=0.5",
                 "Sec-Fetch-Mode": "navigate",
-            }
+            },
+            **_yt_cookies_options(),
         }
         try:
             with YT_EXTRACT_LOCK:
@@ -790,15 +849,18 @@ class AppHandler(SimpleHTTPRequestHandler):
                     audio_url = ""
                 duration = info.get("duration") or 0
             if audio_url:
-                YT_URL_CACHE[cache_key] = (audio_url, now)
+                with YT_URL_CACHE_LOCK:
+                    YT_URL_CACHE[cache_key] = (audio_url, now)
             return audio_url or "", duration
         except Exception as e:
             log.error("Failed to extract audio URL for %s: %s", video_id, e)
             message = str(e).lower()
             if "login_required" in message or "not a bot" in message or "sign in" in message:
-                YT_BLOCKED_UNTIL = time.time() + YT_BLOCK_COOLDOWN
-            # Сбрасываем кэш при ошибке
-            YT_URL_CACHE.pop(cache_key, None)
+                with YT_URL_CACHE_LOCK:
+                    YT_BLOCKED_UNTIL = time.time() + YT_BLOCK_COOLDOWN
+                log.warning("YouTube bot-check triggered, cooldown %ss", YT_BLOCK_COOLDOWN)
+            with YT_URL_CACHE_LOCK:
+                YT_URL_CACHE.pop(cache_key, None)
             raise
 
     def _youtube_cached_file(self, video_id: str) -> str | None:
@@ -833,6 +895,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "socket_timeout": 30,
                     "noplaylist": True,
                     "outtmpl": outtmpl,
+                    **_yt_cookies_options(),
                 }) as ydl:
                     ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
             except Exception as error:
@@ -1320,7 +1383,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                     break
         if not mbid:
             return ""
-        time.sleep(1.1)  # лимит MusicBrainz: не чаще 1 запроса в секунду
+        _mb_rate_limit()
         # 2) У артиста берём связь с Wikidata (и заодно возможную прямую картинку).
         art = self._json_get(
             f"https://musicbrainz.org/ws/2/artist/{mbid}?inc=url-rels&fmt=json",
