@@ -33,6 +33,19 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def replace_file_from_different_volume(source: Path, destination: Path) -> None:
+    """Copy to the target volume first; os.replace cannot cross drive letters."""
+    temporary = destination.with_name(f".{destination.name}.update.tmp")
+    try:
+        shutil.copy2(source, temporary)
+        os.replace(temporary, destination)
+    finally:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pid", type=int, required=True)
@@ -55,13 +68,18 @@ def main() -> int:
                 destination = (extract_dir / member.filename).resolve()
                 if extract_dir.resolve() not in destination.parents:
                     return 3
-            package.extractall(extract_dir)
+        package.extractall(extract_dir)
+        running_updater = Path(sys.executable).resolve()
         for source in extract_dir.iterdir():
             destination = target / source.name
+            # Windows locks the updater while it is running. Keep the current
+            # updater for this cycle; the next installer release can replace it.
+            if destination.resolve() == running_updater:
+                continue
             if source.is_dir():
                 shutil.copytree(source, destination, dirs_exist_ok=True)
             else:
-                os.replace(source, destination)
+                replace_file_from_different_volume(source, destination)
     subprocess.Popen([args.launch], close_fds=True)
     return 0
 
