@@ -1,5 +1,5 @@
 #define AppName "Umbrella Player"
-#define AppVersion "1.0.0"
+#define AppVersion "1.0.5"
 #define AppExeName "Umbrella Player.exe"
 
 [Setup]

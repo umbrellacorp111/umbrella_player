@@ -476,6 +476,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         if route == "/api/session":
             self.send_json({"token": API_TOKEN})
             return
+        if route == "/api/version":
+            self.send_json({"version": APP_VERSION})
+            return
         if route == "/api/update":
             update = fetch_update()
             self.send_json(update or {"version": APP_VERSION, "available": False})

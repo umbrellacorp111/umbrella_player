@@ -21,6 +21,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r SOVAKOD/requirements.txt pyinstaller
+      - name: Sync version from tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $ver = $tag.TrimStart("v")
+          if (-not $ver) { throw "Empty version from tag $tag" }
+          Write-Host "Syncing version $ver from tag $tag"
+          (Get-Content SOVAKOD/app_version.py) -replace 'APP_VERSION = ".*"', "APP_VERSION = `"$ver`"" | Set-Content SOVAKOD/app_version.py
+          (Get-Content installer/UmbrellaPlayer.iss) -replace '#define AppVersion ".*"', "#define AppVersion `"$ver`"" | Set-Content installer/UmbrellaPlayer.iss
+          $latest = Get-Content updates/latest.json -Raw | ConvertFrom-Json
+          $latest.version = $ver
+          $latest | ConvertTo-Json -Depth 3 | Set-Content updates/latest.json
+          Get-Content SOVAKOD/app_version.py; Get-Content installer/UmbrellaPlayer.iss
       - name: Validate sources
         shell: pwsh
         run: |

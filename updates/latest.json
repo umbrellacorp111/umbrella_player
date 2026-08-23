@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.5",
   "mandatory": false,
   "packageUrl": "",
   "sha256": "",
-  "releaseNotes": "Первый релиз"
+  "releaseNotes": "v1.0.5"
 }

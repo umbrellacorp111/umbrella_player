@@ -7125,8 +7125,19 @@ function init() {
   checkForApplicationUpdate();
 }
 
+async function refreshAppVersion() {
+  try {
+    const info = await request('/version', { timeout: 8000 });
+    if (info && info.version) {
+      const el = $('#appVersion');
+      if (el) el.textContent = String(info.version).replace(/^v/, '');
+    }
+  } catch (e) {}
+}
+
 async function checkForApplicationUpdate() {
   try {
+    await refreshAppVersion();
     const update = await request('/update', { timeout: 10000 });
     if (!update || update.version === undefined || update.available === false) return;
     const banner = $('#updateBanner');
