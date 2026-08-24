@@ -1339,14 +1339,45 @@ class AppHandler(SimpleHTTPRequestHandler):
                 return None
             html_headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+                "Accept-Encoding": "gzip",
                 "Referer": "https://genius.com/",
                 "Cache-Control": "no-cache",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
+                "Priority": "u=0, i",
             }
-            req2 = urllib.request.Request(song_url, headers=html_headers)
-            with _metadata_urlopen(req2, timeout=8) as r2:
-                html = r2.read().decode("utf-8", "ignore")
+            try:
+                req2 = urllib.request.Request(song_url, headers=html_headers)
+                with _metadata_urlopen(req2, timeout=10) as r2:
+                    raw = r2.read()
+                    try:
+                        import gzip
+                        if r2.headers.get("Content-Encoding") == "gzip":
+                            raw = gzip.decompress(raw)
+                    except Exception:
+                        pass
+                    html = raw.decode("utf-8", "ignore")
+            except urllib.error.HTTPError as he:
+                if he.code in (403, 401):
+                    api_path = hit.get("api_path") or ""
+                    if api_path and token:
+                        try:
+                            api_url = f"https://api.genius.com{api_path}?text_format=plain"
+                            api_headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Authorization": f"Bearer {token}"}
+                            req3 = urllib.request.Request(api_url, headers=api_headers)
+                            with _metadata_urlopen(req3, timeout=8) as r3:
+                                j = json.loads(r3.read().decode("utf-8", "ignore"))
+                            desc = (j.get("response", {}).get("song") or {}).get("description", {}).get("plain") or ""
+                            if desc and len(desc.strip()) > 20:
+                                return {"trackName": track, "artistName": artist, "albumName": "", "duration": 0, "instrumental": False, "syncedLyrics": "", "plainLyrics": desc.strip(), "_source": "genius"}
+                        except Exception:
+                            pass
+                raise
             m = re.findall(r'data-lyrics-container[^>]*>(.*?)</div>', html, re.S)
             if not m:
                 m = re.findall(r'class="Lyrics__Container[^>]*>(.*?)</div>', html, re.S)
