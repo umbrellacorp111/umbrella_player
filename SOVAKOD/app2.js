@@ -1572,12 +1572,13 @@ function effectiveDuration() {
 }
 
 async function resolveTrack(track) {
-  // Трек из альбома Deezer, поставленный в очередь без videoId — ищем на YouTube.
-  if (!track.videoId && track._needsLookup) {
-    const data = await request(`/youtube/search?q=${encodeURIComponent(track._needsLookup)}&count=1`, { timeout: 30000 });
+  if ((!track.scUrl && !track.scId && !track.videoId) && track._needsLookup) {
+    const data = await request(`/sc/search?q=${encodeURIComponent(track._needsLookup)}&count=1`, { timeout: 30000 });
     const found = (data.tracks || [])[0];
-    if (!found) throw new Error('Трек не найден');
-    track.videoId = found.videoId;
+    if (!found) throw new Error('Трек не найден в Umbrella Search');
+    track.scUrl = found.url;
+    track.scId = found.id;
+    track.source = 'soundcloud';
     track.thumbnail = track.thumbnail || found.thumbnail || '';
     track.duration = track.duration || found.duration || 0;
     track._needsLookup = null;
@@ -3876,14 +3877,13 @@ function animateAlbumDetail() {
 async function playAlbumTrack(track, artistName, albumTracks, idx) {
   toast(`Поиск: ${artistName} — ${track.title}…`);
   try {
-    const data = await request(`/youtube/search?q=${encodeURIComponent(artistName + ' ' + track.title)}&count=1`, { timeout: 30000 });
+    const data = await request(`/sc/search?q=${encodeURIComponent(artistName + ' ' + track.title)}&count=1`, { timeout: 30000 });
     const found = (data.tracks || [])[0];
-    if (!found) { toast('Трек не найден на Umbrella Search', 'error'); return; }
-    const t = { title: found.title, artist: found.artist, videoId: found.videoId, source: 'youtube', thumbnail: found.thumbnail, duration: found.duration || track.duration, album: 'Deezer Альбом', color: '', _keepAlbumOpen: true, _albumRowIndex: idx };
-    // Очередь — весь альбом: остальные треки дорезолвятся при переходе.
+    if (!found) { toast('Трек не найден в Umbrella Search', 'error'); return; }
+    const t = { title: found.title, artist: found.artist, scUrl: found.url, scId: found.id, source: 'soundcloud', thumbnail: found.thumbnail, duration: found.duration || track.duration, album: 'Deezer Альбом', color: '', _keepAlbumOpen: true, _albumRowIndex: idx };
     if (Array.isArray(albumTracks) && albumTracks.length && Number.isInteger(idx)) {
       const queue = albumTracks.map((x, i) => (i === idx ? t : {
-        title: x.title, artist: x.artist || artistName, videoId: null, source: 'youtube',
+        title: x.title, artist: x.artist || artistName, scUrl: null, scId: null, source: 'soundcloud',
         thumbnail: x.thumbnail || '', duration: x.duration || 0, album: 'Deezer Альбом', color: '',
         _needsLookup: `${artistName} ${x.title}`, _keepAlbumOpen: true, _albumRowIndex: i,
       }));
