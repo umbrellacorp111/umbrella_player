@@ -157,3 +157,28 @@ body:not(.app-on) .sidebar{display:none!important}
   .track-row .track-action{justify-self:end!important}
   .track-row .track-fav{opacity:1!important;transform:none!important}
 }
+
+/* === FIX search track rows on mobile === */
+@media(max-width:768px){
+  .track-list .track-row, .search-panel .track-row, #searchResults .track-row{
+    grid-template-columns:28px minmax(0,1fr) auto 36px!important;
+    gap:8px!important;
+    padding:8px 10px!important;
+    align-items:center!important;
+    min-height:56px!important;
+  }
+  .track-list .track-row .album, .search-panel .track-row .album{display:none!important}
+  .track-list .track-row .track-btns, .search-panel .track-row .track-btns{display:none!important}
+  .track-list .track-row .track-main, .search-panel .track-row .track-main{gap:8px!important}
+  .track-list .track-row .track-main .yt-thumb,
+  .track-list .track-row .track-main .track-cover,
+  .search-panel .track-row .track-main .yt-thumb,
+  .search-panel .track-row .track-main .track-cover{width:36px!important;height:36px!important;border-radius:8px!important}
+  .track-list .track-row .track-action, .search-panel .track-row .track-action{
+    width:32px!important;height:32px!important;justify-self:end!important;opacity:1!important;transform:none!important;position:static!important;background:rgba(255,255,255,.08)!important;border:1px solid rgba(255,255,255,.1)!important;
+  }
+  .track-list .track-row.playing .track-action, .search-panel .track-row.playing .track-action{background:#fff!important;color:#111!important}
+  .track-list .track-row .duration, .search-panel .track-row .duration{font-size:11px!important;color:#9aa0ab!important;white-space:nowrap}
+  .track-list .track-row .track-meta b, .search-panel .track-row .track-meta b{font-size:13px!important}
+  .track-list .track-row .track-meta small, .search-panel .track-row .track-meta small{font-size:11px!important}
+}
