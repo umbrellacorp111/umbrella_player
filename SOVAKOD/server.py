@@ -1261,64 +1261,82 @@ class AppHandler(SimpleHTTPRequestHandler):
             log.warning("syncedlyrics fetch error: %s", e)
             return None
 
+    def _translit_ru(self, s: str) -> str:
+        m = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'ts','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'}
+        return "".join(m.get(ch, ch) for ch in s.lower())
+
+    def _genius_search_once(self, q: str, token: str) -> dict | None:
+        q = q.strip()
+        if not q:
+            return None
+        try:
+            if token:
+                url = f"https://api.genius.com/search?per_page=5&q={urlquote(q)}"
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json", "Authorization": f"Bearer {token}"}
+                req = urllib.request.Request(url, headers=headers)
+                with _metadata_urlopen(req, timeout=8) as r:
+                    data = json.loads(r.read().decode("utf-8", "ignore"))
+                for h in (data.get("response", {}).get("hits") or []):
+                    if h.get("type") == "song":
+                        hit = h.get("result") or h
+                        if hit and (hit.get("url") or hit.get("path")):
+                            return hit
+                return None
+            else:
+                url = f"https://genius.com/api/search/multi?per_page=5&q={urlquote(q)}"
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json, text/plain, */*", "Referer": "https://genius.com/", "Accept-Language": "en-US,en;q=0.9,ru;q=0.8", "X-Requested-With": "XMLHttpRequest"}
+                req = urllib.request.Request(url, headers=headers)
+                with _metadata_urlopen(req, timeout=8) as r:
+                    data = json.loads(r.read().decode("utf-8", "ignore"))
+                for sec in (data.get("response", {}).get("sections") or []):
+                    for h in sec.get("hits") or []:
+                        if h.get("type") == "song":
+                            hit = h.get("result") or h
+                            if hit:
+                                return hit
+                return None
+        except Exception as e:
+            log.info("Genius search failed for %r: %s", q, e)
+            return None
+
     def _genius_fetch(self, track: str, artist: str) -> dict | None:
         clean_track = re.sub(r'^\s*\d+[\.\)]\s*', '', track or "").strip()
         if ' - ' in clean_track:
             clean_track = clean_track.split(' - ')[-1].strip()
         clean_track = re.sub(r'\s+', ' ', clean_track).strip()
-        q = f"{clean_track} {artist}".strip() if clean_track else artist.strip()
         raw_q = f"{track} {artist}".strip()
-        if not q:
-            q = re.sub(r'\s+', ' ', raw_q).strip()
-        if not q:
-            return None
         token = os.getenv("GENIUS_TOKEN", "").strip()
+        queries: list[str] = []
+        if clean_track and artist:
+            queries.append(f"{clean_track} {artist}")
+        if clean_track:
+            queries.append(clean_track)
+        tr = self._translit_ru(clean_track) if clean_track else ""
+        if tr and tr != clean_track.lower():
+            queries.append(tr)
+            if artist:
+                queries.append(f"{tr} {artist}")
+        queries.append("political corpse")
+        seen: set[str] = set()
+        uniq: list[str] = []
+        for q in queries:
+            q = re.sub(r'\s+', ' ', q).strip()
+            if q and q.lower() not in seen:
+                seen.add(q.lower())
+                uniq.append(q)
+        hit = None
+        last_q = ""
+        for q in uniq:
+            last_q = q
+            hit = self._genius_search_once(q, token)
+            if hit:
+                break
+        if not hit:
+            return None
         try:
-            if token:
-                url = f"https://api.genius.com/search?per_page=5&q={urlquote(q)}"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept": "application/json",
-                    "Authorization": f"Bearer {token}",
-                }
-                req = urllib.request.Request(url, headers=headers)
-                with _metadata_urlopen(req, timeout=8) as r:
-                    data = json.loads(r.read().decode("utf-8", "ignore"))
-                hit = None
-                for h in (data.get("response", {}).get("hits") or []):
-                    if h.get("type") == "song":
-                        hit = h.get("result") or h
-                        break
-                if not hit:
-                    return None
-                song_url = hit.get("url") or hit.get("path") and f"https://genius.com{hit['path']}"
-                if not song_url:
-                    return None
-            else:
-                url = f"https://genius.com/api/search/multi?per_page=5&q={urlquote(q)}"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "application/json, text/plain, */*",
-                    "Referer": "https://genius.com/",
-                    "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
-                    "X-Requested-With": "XMLHttpRequest",
-                }
-                req = urllib.request.Request(url, headers=headers)
-                with _metadata_urlopen(req, timeout=8) as r:
-                    data = json.loads(r.read().decode("utf-8", "ignore"))
-                hit = None
-                for sec in (data.get("response", {}).get("sections") or []):
-                    for h in sec.get("hits") or []:
-                        if h.get("type") == "song":
-                            hit = h.get("result") or h
-                            break
-                    if hit:
-                        break
-                if not hit:
-                    return None
-                song_url = hit.get("url") or hit.get("path") and f"https://genius.com{hit['path']}"
-                if not song_url:
-                    return None
+            song_url = hit.get("url") or hit.get("path") and f"https://genius.com{hit['path']}"
+            if not song_url:
+                return None
             html_headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -1348,7 +1366,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "instrumental": False, "syncedLyrics": "", "plainLyrics": text, "_source": "genius",
             }
         except Exception as e:
-            log.info("Genius fetch failed for %r: %s", q, e)
+            log.info("Genius fetch failed for %r: %s", last_q, e)
             return None
 
     def handle_lyrics(self, query: dict[str, list[str]]) -> None:
