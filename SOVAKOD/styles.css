@@ -3778,7 +3778,9 @@ body{background:#07080c!important}
 .ambient{background:#07080c!important}
 .ambient::after{opacity:.55}
 .ambient canvas{opacity:.35}
-.app{grid-template-columns:236px 1fr}
+body.app-on .app{grid-template-columns:236px 1fr}
+.app{grid-template-columns:1fr}
+body:not(.app-on) .sidebar{display:none!important}
 .sidebar{background:#0b0b0e!important;border-right:1px solid #1e1e24!important;padding:16px 10px 14px!important}
 .brand{padding:6px 8px 18px!important;gap:10px!important}
 .brand-mark{width:40px!important;height:40px!important;border-radius:12px!important;background:linear-gradient(135deg,#6d28d9,#8b5cf6)!important;box-shadow:0 8px 20px rgba(124,58,237,.35)!important}
@@ -3903,3 +3905,21 @@ body{background:#07080c!important}
 }
 .mobile-topbar{display:none;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--bg-0);position:sticky;top:0;z-index:10}
 .mobile-topbar button{width:36px;height:36px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+
+/* === FIXES for reported mobile/PC issues === */
+.launch-view{min-height:100vh!important;display:grid!important;place-items:center!important;padding:60px 24px!important}
+.launch-inner{max-width:620px!important;margin:0 auto!important}
+@media(max-width:768px){
+  .launch-view{padding:40px 16px!important}
+  .ambient::after{animation:none!important;will-change:opacity!important;transform:translateZ(0)!important}
+  .ambient{transform:translateZ(0)!important}
+  .sidebar .nav-link{justify-content:flex-start!important;text-align:left!important}
+  .sidebar .nav-link span{display:inline!important;opacity:1!important}
+  .sidebar .nav-link svg{flex:0 0 16px!important}
+  .track-row{grid-template-columns:42px minmax(0,1fr) auto 36px!important;gap:8px!important}
+  .track-row .track-main{grid-column:2}
+  .track-row .duration{grid-column:3;text-align:right}
+  .track-row .track-btns{grid-column:4;justify-content:flex-end}
+  .track-row .track-action{justify-self:end!important}
+  .track-row .track-fav{opacity:1!important;transform:none!important}
+}
