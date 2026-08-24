@@ -12,7 +12,7 @@ const state = {
   searchResults: [],
   visibleTracks: [],
   sortNewest: true,
-  searchSource: 'youtube',
+  searchSource: 'soundcloud',
   searchGen: 0,
   albumResults: [],
   currentTrack: null,

@@ -456,23 +456,11 @@ class AppHandler(SimpleHTTPRequestHandler):
         route = parsed.path
         if route.startswith("/youtube/") and not route.startswith("/api/"):
             route = "/api" + route
-        if route == "/api/youtube/search":
-            self.handle_youtube_search(parse_qs(parsed.query))
-            return
-        if route == "/api/youtube/proxy":
-            self.handle_youtube_proxy(parse_qs(parsed.query))
-            return
-        if route == "/api/youtube/stream":
-            self.handle_youtube_stream(parse_qs(parsed.query))
-            return
-        if route == "/api/youtube/related":
-            self.handle_youtube_related(parse_qs(parsed.query))
+        if route in ("/api/youtube/search", "/api/youtube/proxy", "/api/youtube/stream", "/api/youtube/related", "/api/youtube/playlist"):
+            self.send_json({"error": "YouTube отключен — используется только SoundCloud"}, HTTPStatus.GONE)
             return
         if route == "/api/archaeo/related":
             self.handle_archaeo_related(parse_qs(parsed.query))
-            return
-        if route == "/api/youtube/playlist":
-            self.handle_youtube_playlist(parse_qs(parsed.query))
             return
         if route == "/api/lyrics":
             self.handle_lyrics(parse_qs(parsed.query))
@@ -489,11 +477,8 @@ class AppHandler(SimpleHTTPRequestHandler):
         if route == "/api/artist/bio":
             self.handle_artist_bio(parse_qs(parsed.query))
             return
-        if route == "/api/youtube/stream":
-            self.handle_youtube_stream(parse_qs(parsed.query))
-            return
-        if route == "/api/music/stream":
-            self.handle_music_stream(parse_qs(parsed.query))
+        if route in ("/api/youtube/stream", "/api/music/stream"):
+            self.send_json({"error": "YouTube отключен — используется только SoundCloud"}, HTTPStatus.GONE)
             return
         if route == "/api/sc/search":
             self.handle_sc_search(parse_qs(parsed.query))
