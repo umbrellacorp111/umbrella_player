@@ -242,16 +242,33 @@ def _mb_rate_limit() -> None:
 
 
 def _yt_cookies_options() -> dict:
+    def _writable_copy(src: Path) -> str:
+        try:
+            dst = APP_DATA_DIR / "cookies.txt"
+            if str(src).startswith("/etc/secrets"):
+                import shutil
+                shutil.copyfile(src, dst)
+                try:
+                    os.chmod(dst, 0o600)
+                except OSError:
+                    pass
+                return str(dst)
+            return str(src)
+        except OSError as e:
+            log.warning("Failed to copy cookies %s -> %s: %s", src, APP_DATA_DIR, e)
+            return str(src)
     candidates = [APP_DATA_DIR / n for n in ("cookies.txt", "youtube_cookies.txt", "cookies_youtube.txt")]
     candidates += [Path("/etc/secrets/cookies.txt"), Path("/etc/secrets/youtube_cookies.txt")]
     for p in candidates:
         if p.is_file() and p.stat().st_size > 0:
-            log.info("Using cookies file: %s (%d bytes)", p, p.stat().st_size)
-            return {"cookiefile": str(p)}
+            wp = _writable_copy(p)
+            log.info("Using cookies file: %s -> %s (%d bytes)", p, wp, p.stat().st_size)
+            return {"cookiefile": wp}
     env_cookie = os.getenv("YT_COOKIES_FILE", "").strip()
     if env_cookie and Path(env_cookie).is_file():
-        log.info("Using cookies file from env: %s", env_cookie)
-        return {"cookiefile": env_cookie}
+        wp = _writable_copy(Path(env_cookie))
+        log.info("Using cookies file from env: %s -> %s", env_cookie, wp)
+        return {"cookiefile": wp}
     log.warning("No cookies file found (checked %s)", ", ".join(str(c) for c in candidates))
     return {}
 
