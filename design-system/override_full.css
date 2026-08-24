@@ -17,7 +17,7 @@ body:not(.app-on) .sidebar{display:none!important}
 .nav-link svg{width:16px;height:16px;opacity:.9}
 .nav-link.active{background:#17171d!important;color:#fff!important;border:1px solid rgba(255,255,255,.06)!important;box-shadow:none!important}
 .nav-link.active::before{left:-10px!important;width:3px!important;height:18px!important;background:#8b5cf6!important}
-.content{padding:20px 26px 28px!important;max-width:1440px}
+.content{padding:20px 26px 28px!important;max-width:none!important}
 .dash-header{margin-bottom:18px!important;gap:16px}
 .dash-heading h1{font-size:30px!important;font-weight:800!important;letter-spacing:-.8px!important;line-height:1!important}
 .dash-heading p{font-size:13px!important;color:#6b7280!important;margin-top:6px!important}
@@ -136,7 +136,8 @@ body:not(.app-on) .sidebar{display:none!important}
 .mobile-topbar button{width:36px;height:36px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
 
 /* === FIXES for reported mobile/PC issues === */
-.launch-view:not([hidden]){display:grid!important;min-height:100vh!important;place-items:center!important;padding:60px 24px!important}
+body:not(.app-on) .content{padding:0!important;max-width:none!important}
+.launch-view:not([hidden]){display:grid!important;min-height:100vh!important;place-items:center!important;padding:60px 24px!important;width:100%!important;margin:0!important}
 .launch-view[hidden]{display:none!important}
 .launch-inner{max-width:620px!important;margin:0 auto!important}
 @media(max-width:768px){
