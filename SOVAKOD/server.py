@@ -1261,6 +1261,53 @@ class AppHandler(SimpleHTTPRequestHandler):
             log.warning("syncedlyrics fetch error: %s", e)
             return None
 
+    def _genius_fetch(self, track: str, artist: str) -> dict | None:
+        q = f"{track} {artist}".strip()
+        if not q:
+            return None
+        try:
+            url = f"https://genius.com/api/search/multi?per_page=5&q={urlquote(q)}"
+            req = urllib.request.Request(url, headers={"User-Agent": "UmbrellaPlayer/2.0", "Accept": "application/json"})
+            with _metadata_urlopen(req, timeout=8) as r:
+                data = json.loads(r.read().decode("utf-8", "ignore"))
+            hit = None
+            for sec in (data.get("response", {}).get("sections") or []):
+                for h in sec.get("hits") or []:
+                    if h.get("type") == "song":
+                        hit = h.get("result") or h
+                        break
+                if hit:
+                    break
+            if not hit:
+                return None
+            song_url = hit.get("url") or hit.get("path") and f"https://genius.com{hit['path']}"
+            if not song_url:
+                return None
+            req2 = urllib.request.Request(song_url, headers={"User-Agent": "UmbrellaPlayer/2.0"})
+            with _metadata_urlopen(req2, timeout=8) as r2:
+                html = r2.read().decode("utf-8", "ignore")
+            m = re.findall(r'data-lyrics-container[^>]*>(.*?)</div>', html, re.S)
+            if not m:
+                m = re.findall(r'class="Lyrics__Container[^>]*>(.*?)</div>', html, re.S)
+            if not m:
+                return None
+            text = ""
+            for block in m:
+                block = re.sub(r'<br\s*/?>', '\n', block)
+                block = re.sub(r'<[^>]+>', '', block)
+                block = block.replace('&amp;', '&').replace('&quot;', '"').replace('&#39;', "'")
+                text += block.strip() + "\n\n"
+            text = text.strip()
+            if len(text) < 20:
+                return None
+            return {
+                "trackName": track, "artistName": artist, "albumName": "", "duration": 0,
+                "instrumental": False, "syncedLyrics": "", "plainLyrics": text, "_source": "genius",
+            }
+        except Exception as e:
+            log.info("Genius fetch failed for %r: %s", q, e)
+            return None
+
     def handle_lyrics(self, query: dict[str, list[str]]) -> None:
         track = query.get("track_name", [""])[0].strip()
         artist = query.get("artist_name", [""])[0].strip()
@@ -1299,6 +1346,10 @@ class AppHandler(SimpleHTTPRequestHandler):
             mux = self._syncedlyrics_fetch(track, artist)
             if mux:
                 result = mux
+        if not result:
+            g = self._genius_fetch(track, artist)
+            if g:
+                result = g
         if result:
             out = {
                 "trackName": result.get("trackName", ""),

@@ -3908,6 +3908,10 @@ body:not(.app-on) .sidebar{display:none!important}
 }
 .mobile-topbar{display:none;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--bg-0);position:sticky;top:0;z-index:10}
 .mobile-topbar button{width:36px;height:36px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+/* waveform mobile visible */
+#npWave{display:block!important;opacity:1!important;visibility:visible!important;height:80px!important;min-height:80px!important}
+.np-wave{height:80px!important;opacity:1!important}
+.np-progress{opacity:1!important}
 
 /* === FIXES for reported mobile/PC issues === */
 body:not(.app-on) .content{padding:0!important;max-width:none!important}
