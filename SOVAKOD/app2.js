@@ -2715,20 +2715,23 @@ async function request(path, options = {}) {
   return body;
 }
 
-async function searchYouTube(query, count = 20) {
-  const res = await request(`/youtube/search?q=${encodeURIComponent(query)}&count=${count}`, { timeout: 60000 });
+async function searchSC(query, count = 20) {
+  const res = await request(`/sc/search?q=${encodeURIComponent(query)}&count=${count}`, { timeout: 60000 });
   return res.tracks || [];
 }
+async function searchYouTube(query, count = 20) { return searchSC(query, count); }
 
-async function fetchRelatedTracks(videoId) {
+async function fetchRelatedTracksSC(artist, title) {
   try {
-    const res = await request(`/youtube/related?videoId=${encodeURIComponent(videoId)}`);
+    const q = [artist, title].filter(Boolean).join(' ');
+    const res = await request(`/sc/search?q=${encodeURIComponent(q)}&count=12`, { timeout: 30000 });
     return res.tracks || [];
   } catch (e) { return []; }
 }
+async function fetchRelatedTracks(videoId) { return []; }
 
 function buildRadioTrack(item) {
-  return { title: item.title, artist: item.artist, videoId: item.videoId, source: 'youtube', thumbnail: item.thumbnail, duration: item.duration || 0, album: 'Umbrella Search Радио', color: '' };
+  return { title: item.title, artist: item.artist, scUrl: item.url || item.scUrl, scId: item.id || item.scId, source: 'soundcloud', thumbnail: item.thumbnail, duration: item.duration || 0, album: 'Umbrella Radio', color: '' };
 }
 
 async function startArtistRadio(artist) {
@@ -2737,7 +2740,7 @@ async function startArtistRadio(artist) {
   toast('Радио: ищем треки исполнителя…');
   let results;
   try {
-    results = await searchYouTube(artist, 25);
+    results = await searchSC(artist, 25);
   } catch (e) {
     toast('Радио: ошибка поиска', 'error');
     return;
@@ -2763,18 +2766,19 @@ async function startArtistRadio(artist) {
 async function playNextRadio() {
   if (!state.radioMode || !state.currentTrack) return;
   const cur = state.currentTrack;
-  if (cur.videoId) state.radioPlayedIds.add(cur.videoId);
+  const curId = cur.scUrl || cur.scId || cur.videoId;
+  if (curId) state.radioPlayedIds.add(curId);
   if (state.radioQueue.length === 0) {
     if (state.radioKind === 'artist' && state.radioQuery) {
       toast('Радио: загружаем ещё треки…');
-      let more = await searchYouTube(state.radioQuery, 25);
-      if (!more.length) more = await searchYouTube(state.radioQuery, 25);
-      state.radioQueue = more.map(buildRadioTrack).filter((t) => !state.radioPlayedIds.has(t.videoId));
-    } else if (state.radioKind === 'related' && cur.videoId) {
+      let more = await searchSC(state.radioQuery, 25);
+      if (!more.length) more = await searchSC(state.radioQuery, 25);
+      state.radioQueue = more.map(buildRadioTrack).filter((t) => !state.radioPlayedIds.has(t.scUrl || t.scId));
+    } else if (state.radioKind === 'related') {
       toast('Радио: загружаем похожие треки…');
-      let related = await fetchRelatedTracks(cur.videoId);
-      if (!related.length) related = await fetchRelatedTracks(cur.videoId);
-      state.radioQueue = related.filter((t) => !state.radioPlayedIds.has(t.videoId));
+      let related = await fetchRelatedTracksSC(cur.artist, cur.title);
+      if (!related.length) related = await searchSC(cur.artist || cur.title, 12);
+      state.radioQueue = related.map(buildRadioTrack).filter((t) => !state.radioPlayedIds.has(t.scUrl || t.scId));
     }
   }
   if (state.radioQueue.length === 0) {
@@ -2785,7 +2789,7 @@ async function playNextRadio() {
     return;
   }
   const next = state.radioQueue.shift();
-  if (!next || !next.videoId) { nextTrack(); return; }
+  if (!next || (!next.scUrl && !next.scId && !next.videoId)) { nextTrack(); return; }
   state.visibleTracks.push(next);
   playTrack(next, state.visibleTracks.length - 1);
 }
@@ -2955,12 +2959,7 @@ async function performSearch(query) {
   $('#albumDetail').hidden = true;
   $('#searchEmpty').hidden = true;
   $('#searchHistory').hidden = true;
-  if (isYt) {
-    $('#searchResults').innerHTML = `<div class="search-verifying">
-      <div class="search-verifying-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
-      <div><b>Ищем музыку</b><p>Это может занять несколько секунд.</p></div>
-    </div>`;
-  }
+
   try {
     if (isAlbums) {
       await searchAlbumsUnified(query, gen);
@@ -2978,10 +2977,10 @@ async function performSearch(query) {
       if (window.gsap && tracks.length && !reduceMotion()) {
         gsap.fromTo('#searchResults .track-row', { opacity: 0, y: 14, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.3, ease: 'power2.out', stagger: 0.03, clearProps: 'transform' });
       }
-    } else if (isYt) {
-      const ytData = await request(`/youtube/search?q=${encodeURIComponent(query)}&count=18`, { timeout: 60000 });
+    } else {
+      const data = await request(`/sc/search?q=${encodeURIComponent(query)}&count=18`, { timeout: 60000 });
       if (searchStale(gen, source)) return;
-      const tracks = (ytData.tracks || []).map((t) => ({ ...t, source: 'youtube' }));
+      const tracks = (data.tracks || []).map((t) => ({ ...t, source: 'soundcloud', scId: t.id, scUrl: t.url }));
       state.searchResults = tracks;
       $('#searchEmpty').hidden = tracks.length > 0;
       $('#searchResults').innerHTML = tracks.length
@@ -3013,9 +3012,8 @@ async function searchAlbumsUnified(query, gen) {
   try {
     // Настоящие альбомы берём из Deezer; плейлисты YouTube и подборки
     // SoundCloud идут дополнением, а не основой выдачи.
-    const [dzRes, ytRes, scRes] = await Promise.allSettled([
+    const [dzRes, scRes] = await Promise.allSettled([
       request(`/music/albums?q=${encodeURIComponent(query)}&limit=24`, { timeout: 20000 }),
-      request(`/youtube/search?q=${encodeURIComponent(query)}&count=10&type=playlist`, { timeout: 20000 }),
       request(`/sc/search?q=${encodeURIComponent(query)}&count=15`, { timeout: 40000 }),
     ]);
     const albums = [];
@@ -3198,17 +3196,29 @@ function renderAlbums(albums) {
 
 async function importYouTubePlaylist(url) {
   url = (url || '').trim();
-  if (!url) return toast('Вставьте ссылку на Umbrella Search-плейлист');
-  if (!/youtube\.com\/(playlist|watch)|youtu\.be/.test(url) || !/list=/.test(url)) {
-    return toast('Это не похоже на ссылку на плейлист', 'error');
+  if (!url) return toast('Вставьте ссылку на плейлист');
+  const isScSet = /soundcloud\.com\/.+\/sets\//.test(url);
+  const isYt = /youtube\.com\/(playlist|watch)|youtu\.be/.test(url);
+  if (!isScSet && !isYt) {
+    return toast('Это не похоже на ссылку на плейлист (поддерживается SoundCloud)', 'error');
+  }
+  if (isYt) {
+    return toast('YouTube-плейлисты отключены — используйте SoundCloud', 'info');
   }
   const banner = $('#playlistBanner');
   const results = $('#searchResults');
   results.innerHTML = '<div class="empty-search" style="padding:30px"><p>Загрузка плейлиста…</p></div>';
   banner.hidden = true;
   try {
-    const data = await request(`/youtube/playlist?url=${encodeURIComponent(url)}&count=100`, { timeout: 60000 });
-    const tracks = (data.tracks || []).map((t) => ({ ...t, source: 'youtube', album: 'Umbrella Search' }));
+    let data;
+    if (isScSet) {
+      const setName = decodeURIComponent((url.split('/sets/')[1] || '').split('?')[0]).replace(/[-_]/g, ' ');
+      const scData = await request(`/sc/search?q=${encodeURIComponent(setName)}&count=20`, { timeout: 30000 });
+      data = { title: setName || 'SoundCloud Set', tracks: (scData.tracks || []).slice(0, 20) };
+    } else {
+      data = await request(`/youtube/playlist?url=${encodeURIComponent(url)}&count=100`, { timeout: 60000 });
+    }
+    const tracks = (data.tracks || []).map((t) => ({ ...t, source: isScSet ? 'soundcloud' : 'youtube', scId: t.id, scUrl: t.url, album: isScSet ? 'SoundCloud' : 'Umbrella Search' }));
     if (!tracks.length) {
       results.innerHTML = '<div class="empty-search"><h2>Плейлист пуст</h2><p>Не удалось получить треки.</p></div>';
       return;

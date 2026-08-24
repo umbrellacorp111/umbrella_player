@@ -708,19 +708,22 @@ class AppHandler(SimpleHTTPRequestHandler):
     def _youtube_related_entries(self, video_id: str, limit: int = 10) -> list[dict]:
         ydl_opts = {
             "quiet": True, "no_warnings": True, "socket_timeout": 15,
-            "extract_flat": True, "default_search": "ytsearch",
+            "extract_flat": True, "default_search": "scsearch",
         }
+        try:
+            with _limited_youtube_dl(ydl_opts) as ydl:
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            tags = info.get("tags") or []
+            channel = info.get("channel") or info.get("uploader") or ""
+            title_words = (info.get("title") or "").split()
+            query_parts = tags[:3] if tags else title_words[:4]
+            if channel:
+                query_parts.append(channel)
+            search_q = " ".join(query_parts) if query_parts else video_id
+        except Exception:
+            search_q = video_id
         with _limited_youtube_dl(ydl_opts) as ydl:
-            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-        tags = info.get("tags") or []
-        channel = info.get("channel") or info.get("uploader") or ""
-        title_words = (info.get("title") or "").split()
-        query_parts = tags[:3] if tags else title_words[:4]
-        if channel:
-            query_parts.append(channel)
-        search_q = " ".join(query_parts) if query_parts else video_id
-        with _limited_youtube_dl(ydl_opts) as ydl:
-            result = ydl.extract_info(f"ytsearch{limit}:{search_q}", download=False)
+            result = ydl.extract_info(f"scsearch{limit}:{search_q}", download=False)
         return (result.get("entries") or [])[:limit]
 
     def _related_ids(self, video_id: str, limit: int = 10) -> list[str]:
@@ -1841,27 +1844,27 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "tracks": tracks,
                 })
                 return
-        # Фоллбэк: YouTube поиск по названию альбома
+        # Фоллбэк: SoundCloud поиск по названию альбома
         if yt_dlp is not None and search_title:
             try:
                 ydl_opts = {
                     "quiet": True, "no_warnings": True, "socket_timeout": 15,
-                    "extract_flat": True, "default_search": "ytsearch",
+                    "extract_flat": True, "default_search": "scsearch",
                 }
                 with _limited_youtube_dl(ydl_opts) as ydl:
-                    result = ydl.extract_info(f"ytsearch20:{search_title}", download=False)
+                    result = ydl.extract_info(f"scsearch20:{search_title}", download=False)
                 items = []
                 for entry in (result.get("entries") or [])[:20]:
                     if not isinstance(entry, dict):
                         continue
                     items.append({
                         "title": entry.get("title", ""),
-                        "artist": entry.get("channel", "") or entry.get("uploader", ""),
+                        "artist": entry.get("uploader", "") or entry.get("channel", ""),
                         "duration": entry.get("duration") or 0,
                         "position": 0,
                         "id": entry.get("id", ""),
                     })
-                log.debug("album_tracks returning %d tracks from YouTube fallback", len(items))
+                log.debug("album_tracks returning %d tracks from SC fallback", len(items))
                 self.send_json({
                     "albumTitle": search_title,
                     "albumArtist": "",
@@ -1871,8 +1874,8 @@ class AppHandler(SimpleHTTPRequestHandler):
                 })
                 return
             except Exception as e:
-                log.warning("YouTube fallback for album tracks failed: %s", e)
-        self.send_json({"error": "Не удалось загрузить треки альбома (Deezer пуст и YouTube недоступен)"}, HTTPStatus.BAD_GATEWAY)
+                log.warning("SC fallback for album tracks failed: %s", e)
+        self.send_json({"error": "Не удалось загрузить треки альбома (Deezer пуст и SoundCloud недоступен)"}, HTTPStatus.BAD_GATEWAY)
 
     # ================== SoundCloud ==================
 
