@@ -539,12 +539,15 @@ const HIST_KEY = 'umbrella_history';
 let history = loadJSON(HIST_KEY, []);
 
 function addHistory(track) {
-  history = history.filter((h) => h.videoId !== track.videoId || (!track.videoId && (h.title !== track.title || h.artist !== track.artist)));
+  const key = track.scUrl || track.scId || track.videoId || `${track.title}|${track.artist}`;
+  history = history.filter((h) => (h.scUrl || h.scId || h.videoId || `${h.title}|${h.artist}`) !== key);
   history.unshift({
     title: track.title || 'Без названия',
     artist: track.artist || 'Неизвестный исполнитель',
     source: track.source || 'local',
     videoId: track.videoId || null,
+    scUrl: track.scUrl || track.url || null,
+    scId: track.scId || null,
     thumbnail: track.thumbnail || '',
     duration: track.duration || 0,
     at: Date.now(),
@@ -564,7 +567,7 @@ function renderRecent() {
     <button class="recent-item" data-h="1">
       <span class="recent-ico">${icons.play}</span>
       <span class="recent-body">
-        <span class="recent-title">${escapeHtml(h.artist)} — ${escapeHtml(h.title)} <i>&bull; ${h.source === 'youtube' ? 'Umbrella Search' : 'Локально'}</i></span>
+        <span class="recent-title">${escapeHtml(h.artist)} — ${escapeHtml(h.title)} <i>&bull; ${h.source === 'soundcloud' || h.source === 'youtube' ? 'Umbrella Search' : 'Локально'}</i></span>
         <small>${formatDuration(h.duration || 0)}</small>
       </span>
     </button>`).join('');
@@ -3920,13 +3923,13 @@ function showAlbumQueueLoading(total) {
 
 async function playAlbumQueue(deezerTracks, artistName) {
   const loading = showAlbumQueueLoading(deezerTracks.length);
-  const ytTracks = [];
+  const scTracks = [];
   for (let i = 0; i < deezerTracks.length; i++) {
     const dt = deezerTracks[i];
     try {
-      const data = await request(`/youtube/search?q=${encodeURIComponent(artistName + ' ' + dt.title)}&count=1`, { timeout: 30000 });
+      const data = await request(`/sc/search?q=${encodeURIComponent(artistName + ' ' + dt.title)}&count=1`, { timeout: 30000 });
       const found = (data.tracks || [])[0];
-      if (found) ytTracks.push({ title: found.title, artist: found.artist, videoId: found.videoId, source: 'youtube', thumbnail: found.thumbnail, duration: found.duration || dt.duration, album: 'Deezer Альбом', color: '', _keepAlbumOpen: true, _albumRowIndex: i });
+      if (found) scTracks.push({ title: found.title, artist: found.artist, scUrl: found.url, scId: found.id, source: 'soundcloud', thumbnail: found.thumbnail, duration: found.duration || dt.duration, album: 'Deezer Альбом', color: '', _keepAlbumOpen: true, _albumRowIndex: i });
     } catch (e) { /* skip */ }
     if (loading) {
       loading.style.setProperty('--album-progress', `${((i + 1) / deezerTracks.length) * 100}%`);
@@ -3934,14 +3937,14 @@ async function playAlbumQueue(deezerTracks, artistName) {
       if (status) status.textContent = `Ищем треки: ${i + 1} из ${deezerTracks.length}`;
     }
   }
-  if (!ytTracks.length) { loading?.remove(); toast('Не удалось найти треки альбома', 'error'); return; }
-  state.visibleTracks = [...ytTracks];
-  highlightAlbumTrack(ytTracks[0]._albumRowIndex);
+  if (!scTracks.length) { loading?.remove(); toast('Не удалось найти треки альбома в Umbrella Search', 'error'); return; }
+  state.visibleTracks = [...scTracks];
+  highlightAlbumTrack(scTracks[0]._albumRowIndex);
   if (loading) {
     const status = loading.querySelector('#albumQueueStatus');
     if (status) status.textContent = 'Запускаем первый трек…';
   }
-  playTrack(ytTracks[0], 0);
+  playTrack(scTracks[0], 0);
 }
 
 /* ============================================================
@@ -3962,7 +3965,7 @@ async function showArtistPage(artist) {
     const picture = `${API}/artist-image?name=${encodeURIComponent(artist)}`;
     const [color, tracks] = await Promise.all([
       getDominantColor(picture),
-      searchYouTube(artist, 25),
+      searchSC(artist, 25),
     ]);
     const root = document.documentElement;
     root.style.setProperty('--artist-rgb', color.rgb);
@@ -3971,9 +3974,9 @@ async function showArtistPage(artist) {
     root.style.setProperty('--artist-b', color.b);
     // YouTube по имени артиста подмешивает мусор («GREAT PHARAOHS OF EGYPT…»),
     // поэтому сначала показываем то, где имя реально совпало.
-    const ytTracks = rankArtistTracks(tracks.map((t) => ({ ...t, source: 'youtube', album: 'YouTube' })), artist);
-    const listHtml = ytTracks.length
-      ? ytTracks.map((t, i) => `
+    const scTracksRanked = rankArtistTracks(tracks.map((t) => ({ ...t, source: 'soundcloud', scUrl: t.url, scId: t.id, album: 'SoundCloud' })), artist);
+    const listHtml = scTracksRanked.length
+      ? scTracksRanked.map((t, i) => `
         <div class="album-detail-row" data-idx="${i}">
           ${t.thumbnail ? `<img class="yt-thumb-sm" src="${escapeHtml(t.thumbnail)}" alt="" loading="lazy" />` : `<span class="pos">${String(i + 1).padStart(2, '0')}</span>`}
           <span class="name">${escapeHtml(t.title)}</span>
@@ -6513,8 +6516,11 @@ function wireEvents() {
     if (!record) return;
     const track = {
       title: record.title, artist: record.artist, source: record.source,
-      videoId: record.videoId, thumbnail: record.thumbnail, duration: record.duration, color: '',
+      videoId: record.videoId, scUrl: record.scUrl, scId: record.scId, thumbnail: record.thumbnail, duration: record.duration, color: '',
+      _needsLookup: (!record.scUrl && !record.scId && !record.videoId) || record.source === 'youtube' ? `${record.artist} ${record.title}` : null,
+      url: record.scUrl,
     };
+    if (track.source === 'youtube') track.source = 'soundcloud';
     if (track.source === 'local') {
       const found = state.tracks.find((t) => t.title === track.title && t.artist === track.artist);
       if (found) track.dbId = found.dbId;

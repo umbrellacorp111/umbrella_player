@@ -3827,7 +3827,7 @@ body:not(.app-on) .sidebar{display:none!important}
 .banner-play{width:44px!important;height:44px!important;border-radius:50%!important;background:#fff!important;color:#0b0b0e!important;border:0!important;box-shadow:0 6px 18px rgba(0,0,0,.25)!important}
 .inf-banner{background:#0a0a0f!important;position:relative}
 .inf-banner .banner-main{padding:18px 20px!important}
-.inf-banner::after{content:"";position:absolute;right:0;top:0;bottom:0;width:52%;background:linear-gradient(90deg,#0a0a0f 0%,rgba(10,10,15,.55) 28%,transparent 62%), url("https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&q=80") center/cover;pointer-events:none;opacity:1}
+.inf-banner::after{content:"";position:absolute;right:0;top:0;bottom:0;width:52%;background:linear-gradient(90deg,#0a0a0f 0%,rgba(10,10,15,.25) 100%), radial-gradient(320px 180px at 70% 50%,rgba(139,92,246,.18),transparent 70%);pointer-events:none;opacity:1}
 .inf-banner .banner-play{position:absolute!important;right:18px!important;top:50%!important;transform:translateY(-50%)!important;z-index:2!important;background:rgba(255,255,255,.14)!important;color:#fff!important;border:1px solid rgba(255,255,255,.14)!important;backdrop-filter:blur(12px)!important;box-shadow:none!important}
 .section-title{margin-bottom:12px!important;align-items:center}
 .section-title h2{font-size:14px!important;font-weight:700!important;letter-spacing:-.2px!important}
