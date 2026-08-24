@@ -6792,30 +6792,47 @@ function wireEvents() {
     updateVolUI(preferredVolume);
   })();
 
-  // Перемотка в нижней панели
+  // Перемотка в нижней панели — throttled, без лага на стриме
   (() => {
     const bar = $('#pbProgress');
     if (!bar) return;
     let dragging = false;
-    const seekTo = (e) => {
+    let pendingRatio = null;
+    let raf = null;
+    const commitSeek = (ratio) => {
+      const dur = effectiveDuration();
+      if (dur) {
+        const el = djActiveElement();
+        try { if (el.fastSeek) el.fastSeek(ratio * dur); else el.currentTime = ratio * dur; } catch(_) { el.currentTime = ratio * dur; }
+      }
+    };
+    const seekTo = (e, commit=false) => {
       const rect = bar.getBoundingClientRect();
       if (!rect.width) return;
       const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-      const dur = effectiveDuration();
-      if (dur) djActiveElement().currentTime = ratio * dur;
       const fill = $('#pbProgressFill');
       if (fill) fill.style.width = `${ratio * 100}%`;
       const knob = $('#pbKnob');
       if (knob) knob.style.left = `${ratio * 100}%`;
+      if (commit) commitSeek(ratio);
+      else pendingRatio = ratio;
     };
     bar.addEventListener('pointerdown', (e) => {
       dragging = true;
       bar.classList.add('dragging');
       bar.setPointerCapture?.(e.pointerId);
-      seekTo(e);
+      seekTo(e, true);
     });
-    bar.addEventListener('pointermove', (e) => { if (dragging) seekTo(e); });
-    const stop = () => { dragging = false; bar.classList.remove('dragging'); };
+    bar.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      pendingRatio = null;
+      seekTo(e, false);
+      if (!raf) raf = requestAnimationFrame(()=>{ raf=null; });
+    });
+    const stop = (e) => {
+      if (dragging && pendingRatio !== null) commitSeek(pendingRatio);
+      dragging = false; pendingRatio = null; bar.classList.remove('dragging');
+    };
     bar.addEventListener('pointerup', stop);
     bar.addEventListener('pointercancel', stop);
     bar.addEventListener('keydown', (e) => {
