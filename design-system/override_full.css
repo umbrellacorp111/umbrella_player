@@ -133,7 +133,8 @@ body:not(.app-on) .sidebar{display:none!important}
 .mobile-topbar button{width:36px;height:36px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
 
 /* === FIXES for reported mobile/PC issues === */
-.launch-view{min-height:100vh!important;display:grid!important;place-items:center!important;padding:60px 24px!important}
+.launch-view:not([hidden]){display:grid!important;min-height:100vh!important;place-items:center!important;padding:60px 24px!important}
+.launch-view[hidden]{display:none!important}
 .launch-inner{max-width:620px!important;margin:0 auto!important}
 @media(max-width:768px){
   .launch-view{padding:40px 16px!important}
