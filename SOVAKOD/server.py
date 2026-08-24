@@ -457,7 +457,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         if route.startswith("/youtube/") and not route.startswith("/api/"):
             route = "/api" + route
         if route in ("/api/youtube/search", "/api/youtube/proxy", "/api/youtube/stream", "/api/youtube/related", "/api/youtube/playlist"):
-            self.send_json({"error": "YouTube отключен — используется только SoundCloud"}, HTTPStatus.GONE)
+            self.send_json({"error": "Источник отключен — используется только Umbrella Search"}, HTTPStatus.GONE)
             return
         if route == "/api/archaeo/related":
             self.handle_archaeo_related(parse_qs(parsed.query))
@@ -478,7 +478,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.handle_artist_bio(parse_qs(parsed.query))
             return
         if route in ("/api/youtube/stream", "/api/music/stream"):
-            self.send_json({"error": "YouTube отключен — используется только SoundCloud"}, HTTPStatus.GONE)
+            self.send_json({"error": "Источник отключен — используется только Umbrella Search"}, HTTPStatus.GONE)
             return
         if route == "/api/sc/search":
             self.handle_sc_search(parse_qs(parsed.query))

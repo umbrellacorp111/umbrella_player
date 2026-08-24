@@ -1,5 +1,5 @@
 /* Umbrella Player — frontend application (v8)
-   Local music library + YouTube search/radio + albums + lyrics */
+   Local music library + Umbrella search/radio + albums + lyrics */
 
 const API = '/api';
 let apiToken = '';
@@ -182,7 +182,7 @@ function showYoutubeVerification(track, index, side) {
   const overlay = $('#ytVerify');
   if (!overlay || !track?.videoId) return;
   ytVerifyContext = { track, index, side };
-  $('#ytVerifyTrackTitle').textContent = track.title || 'YouTube-трек';
+  $('#ytVerifyTrackTitle').textContent = track.title || 'Трек';
   $('#ytVerifyTrackArtist').textContent = track.artist || '';
   const frame = $('#ytVerifyFrame');
   if (frame) {
@@ -564,7 +564,7 @@ function renderRecent() {
     <button class="recent-item" data-h="1">
       <span class="recent-ico">${icons.play}</span>
       <span class="recent-body">
-        <span class="recent-title">${escapeHtml(h.artist)} — ${escapeHtml(h.title)} <i>&bull; ${h.source === 'youtube' ? 'YouTube' : 'Локально'}</i></span>
+        <span class="recent-title">${escapeHtml(h.artist)} — ${escapeHtml(h.title)} <i>&bull; ${h.source === 'youtube' ? 'Umbrella Search' : 'Локально'}</i></span>
         <small>${formatDuration(h.duration || 0)}</small>
       </span>
     </button>`).join('');
@@ -1000,7 +1000,7 @@ async function idbSaveYouTube(meta) {
   // Проверяем, нет ли уже такого трека по videoId
   const existing = state.tracks.find(t => t.videoId === meta.videoId && t.source === 'youtube');
   if (existing && existing.dbId) {
-    console.log('[IDB] YouTube track already exists with dbId:', existing.dbId);
+    console.log('[IDB] Track already exists with dbId:', existing.dbId);
     return existing.dbId;
   }
   
@@ -1017,10 +1017,10 @@ async function idbSaveYouTube(meta) {
   
   try {
     const dbId = await idbTx(DB_STORE, 'readwrite', (s) => s.add(record));
-    console.log('[IDB] Saved YouTube track with dbId:', dbId);
+    console.log('[IDB] Saved track with dbId:', dbId);
     return dbId;
   } catch (e) {
-    console.error('[IDB] Error saving YouTube track:', e);
+    console.error('[IDB] Error saving track:', e);
     throw e;
   }
 }
@@ -1500,7 +1500,7 @@ function trackRow(track, index, mode) {
   const dlBtn = ((isYt && track.videoId) || isSc) ? `<button class="track-dl" data-dl="${escapeHtml(isYt ? track.videoId : (track.scId || track.url || ''))}" aria-label="Скачать" title="${isYt ? 'Скачать офлайн' : 'Скачать в библиотеку'}">${icons.download}<span>${isYt ? 'Скачать офлайн' : 'Скачать в библиотеку'}</span></button>` : '';
   const delBtn = (mode === 'library' || mode === 'yt') ? `<button class="track-del" data-del="${track.id}" aria-label="Удалить" title="Удалить из библиотеки">${icons.trash}<span>Удалить из библиотеки</span></button>` : '';
   const menu = `<span class="track-more-wrap"><button class="track-more" aria-label="Ещё" title="Ещё">${icons.more}</button><span class="track-menu" hidden>${plBtn}${dlBtn}${delBtn}</span></span>`;
-  const album = isYt ? 'YouTube' : (isSc ? 'SoundCloud' : escapeHtml(track.album || ''));
+  const album = isYt ? 'Umbrella Search' : (isSc ? 'SoundCloud' : escapeHtml(track.album || ''));
   const actionLabel = 'Играть';
   return `<article class="track-row ${playing ? 'playing' : ''}" data-index="${index}" data-source="${mode}" draggable="true" title="Играть · перетащите на вертушку, чтобы поставить пластинку">
     <span class="track-number">${numContent}</span>
@@ -1514,7 +1514,7 @@ function trackRow(track, index, mode) {
 
 function renderTracks() {
   const query = ($('#filterInput').value || '').trim().toLowerCase();
-  // Показываем ВСЕ треки (и локальные, и YouTube)
+  // Показываем ВСЕ треки (и локальные, и Umbrella Search)
   let tracks = state.tracks.filter((t) => `${t.title} ${t.artist}`.toLowerCase().includes(query));
   if (!state.sortNewest) tracks = [...tracks].reverse();
   state.visibleTracks = tracks;
@@ -1576,7 +1576,7 @@ async function resolveTrack(track) {
   if (!track.videoId && track._needsLookup) {
     const data = await request(`/youtube/search?q=${encodeURIComponent(track._needsLookup)}&count=1`, { timeout: 30000 });
     const found = (data.tracks || [])[0];
-    if (!found) throw new Error('Трек не найден на YouTube');
+    if (!found) throw new Error('Трек не найден');
     track.videoId = found.videoId;
     track.thumbnail = track.thumbnail || found.thumbnail || '';
     track.duration = track.duration || found.duration || 0;
@@ -1740,6 +1740,9 @@ async function playTrackOn(track, index, side) {
     url = await resolveTrack(track);
   } catch (e) {
     cancelCoreTransition();
+    el.playbackRate = 1;
+    el.volume = preferredVolume;
+    updateVolUI(preferredVolume);
     clearAlbumQueueLoading();
     hidePlaybackLoading();
     return toast(e.message, 'error');
@@ -1794,10 +1797,13 @@ async function playTrackOn(track, index, side) {
     console.error(`[Player] Ошибка воспроизведения ${track.title}: ${errMsg}`, err);
     
     if (retryYouTubePlayback()) {
-      console.warn(`[Player] Повтор YouTube-потока ${track._playAttempts}/2: ${track.videoId}`);
+      console.warn(`[Player] Повтор потока ${track._playAttempts}/2: ${track.videoId}`);
       el.removeEventListener('error', errorHandler);
     } else {
       cancelCoreTransition();
+      el.playbackRate = 1;
+      el.volume = preferredVolume;
+      updateVolUI(preferredVolume);
       clearAlbumQueueLoading();
       hidePlaybackLoading();
       schedulePlaybackError(`Не удалось воспроизвести: ${errMsg}`);
@@ -1845,6 +1851,9 @@ async function playTrackOn(track, index, side) {
         console.error('[Player] Play failed:', e);
         if (!retryYouTubePlayback()) {
           cancelCoreTransition();
+          el.playbackRate = 1;
+          el.volume = preferredVolume;
+          updateVolUI(preferredVolume);
           clearAlbumQueueLoading();
           hidePlaybackLoading();
           schedulePlaybackError('Не удалось воспроизвести трек');
@@ -1857,6 +1866,9 @@ async function playTrackOn(track, index, side) {
       console.error('[Player] Play failed:', e);
       if (!retryYouTubePlayback()) {
         cancelCoreTransition();
+        el.playbackRate = 1;
+        el.volume = preferredVolume;
+        updateVolUI(preferredVolume);
         clearAlbumQueueLoading();
         hidePlaybackLoading();
         schedulePlaybackError('Не удалось воспроизвести трек');
@@ -1897,7 +1909,7 @@ async function playTrackOn(track, index, side) {
     renderQueue();
     refreshFavUI();
     syncVideo();
-    updateVolUI(el.volume);
+    updateVolUI(preferredVolume);
     if (navigator.mediaSession) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: track.title || '', artist: track.artist || '', album: track.album || '',
@@ -2704,7 +2716,7 @@ async function fetchRelatedTracks(videoId) {
 }
 
 function buildRadioTrack(item) {
-  return { title: item.title, artist: item.artist, videoId: item.videoId, source: 'youtube', thumbnail: item.thumbnail, duration: item.duration || 0, album: 'YouTube Радио', color: '' };
+  return { title: item.title, artist: item.artist, videoId: item.videoId, source: 'youtube', thumbnail: item.thumbnail, duration: item.duration || 0, album: 'Umbrella Search Радио', color: '' };
 }
 
 async function startArtistRadio(artist) {
@@ -2831,7 +2843,7 @@ function reorderQueueItem(fromIdx, toIdx) {
 function switchView(view) {
   const meta = {
     library: ['Библиотека', 'Ваша музыка. Ваше пространство.'],
-    search: ['Поиск', 'Найдите треки и альбомы на YouTube'],
+    search: ['Поиск', 'Найдите треки и альбомы на Umbrella Search'],
     favorites: ['Избранное', 'Любимые треки и исполнители'],
     playlists: ['Плейлисты', 'Ваши подборки и Избранное'],
     radio: ['Радио', 'Бесконечный поток под ваше настроение'],
@@ -3174,7 +3186,7 @@ function renderAlbums(albums) {
 
 async function importYouTubePlaylist(url) {
   url = (url || '').trim();
-  if (!url) return toast('Вставьте ссылку на YouTube-плейлист');
+  if (!url) return toast('Вставьте ссылку на Umbrella Search-плейлист');
   if (!/youtube\.com\/(playlist|watch)|youtu\.be/.test(url) || !/list=/.test(url)) {
     return toast('Это не похоже на ссылку на плейлист', 'error');
   }
@@ -3184,7 +3196,7 @@ async function importYouTubePlaylist(url) {
   banner.hidden = true;
   try {
     const data = await request(`/youtube/playlist?url=${encodeURIComponent(url)}&count=100`, { timeout: 60000 });
-    const tracks = (data.tracks || []).map((t) => ({ ...t, source: 'youtube', album: 'YouTube' }));
+    const tracks = (data.tracks || []).map((t) => ({ ...t, source: 'youtube', album: 'Umbrella Search' }));
     if (!tracks.length) {
       results.innerHTML = '<div class="empty-search"><h2>Плейлист пуст</h2><p>Не удалось получить треки.</p></div>';
       return;
@@ -3859,7 +3871,7 @@ async function playAlbumTrack(track, artistName, albumTracks, idx) {
   try {
     const data = await request(`/youtube/search?q=${encodeURIComponent(artistName + ' ' + track.title)}&count=1`, { timeout: 30000 });
     const found = (data.tracks || [])[0];
-    if (!found) { toast('Трек не найден на YouTube', 'error'); return; }
+    if (!found) { toast('Трек не найден на Umbrella Search', 'error'); return; }
     const t = { title: found.title, artist: found.artist, videoId: found.videoId, source: 'youtube', thumbnail: found.thumbnail, duration: found.duration || track.duration, album: 'Deezer Альбом', color: '', _keepAlbumOpen: true, _albumRowIndex: idx };
     // Очередь — весь альбом: остальные треки дорезолвятся при переходе.
     if (Array.isArray(albumTracks) && albumTracks.length && Number.isInteger(idx)) {
@@ -3971,7 +3983,7 @@ async function showArtistPage(artist) {
           <img src="${picture}" alt="" id="artistCoverImg" onerror="this.style.display='none'" />
           <div class="album-detail-info">
             <h2>${escapeHtml(artist)}</h2>
-            <p>${ytTracks.length} ${plural(ytTracks.length)} на YouTube</p>
+            <p>${ytTracks.length} ${plural(ytTracks.length)} на Umbrella Search</p>
             <div class="artist-actions">
               <button class="btn btn-primary btn-sm" id="artistPlayAll">${icons.play}<span>Слушать все</span></button>
               <button class="btn btn-ghost btn-sm" id="artistRadioBtn"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/></svg><span>Радио</span></button>
