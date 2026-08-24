@@ -150,6 +150,19 @@ try:
 except OSError:  # pragma: no cover
     pass
 log.info("Server import OK: root=%s data_dir=%s", ROOT, APP_DATA_DIR)
+try:
+    _b64 = os.getenv("YT_COOKIES_B64", "").strip()
+    _raw = os.getenv("YT_COOKIES_CONTENT", "").strip()
+    _target = APP_DATA_DIR / "cookies.txt"
+    if _b64 and not _target.is_file():
+        import base64
+        _target.write_bytes(base64.b64decode(_b64))
+        log.info("Wrote cookies.txt from YT_COOKIES_B64 (%d bytes)", _target.stat().st_size)
+    elif _raw and not _target.is_file():
+        _target.write_text(_raw, encoding="utf-8")
+        log.info("Wrote cookies.txt from YT_COOKIES_CONTENT")
+except Exception as _e:
+    log.warning("Failed to write cookies from env: %s", _e)
 
 # ---- SoundCloud-подсистема (через yt-dlp: поиск scsearch + прямая загрузка) ----
 SC_DIR = APP_DATA_DIR / "sc_music"
