@@ -1672,8 +1672,14 @@ function cancelCoreTransition() {
   const transition = coreTransition;
   if (!transition) return;
   if (!transition.oldEl.paused) {
-    if (window.gsap && !reduceMotion()) gsap.to(transition.oldEl, { playbackRate: transition.oldRate, duration: 0.3, ease: 'power2.out' });
-    else transition.oldEl.playbackRate = transition.oldRate;
+    if (window.gsap && !reduceMotion()) {
+      gsap.to(transition.oldEl, { playbackRate: transition.oldRate, volume: transition.oldVolume, duration: 0.3, ease: 'power2.out' });
+      gsap.to(transition.oldEl, { volume: transition.oldVolume, duration: 0.3 });
+    } else {
+      transition.oldEl.playbackRate = transition.oldRate;
+      transition.oldEl.volume = transition.oldVolume;
+    }
+    updateVolUI(preferredVolume);
   }
   coreTransition = null;
 }
@@ -1747,7 +1753,13 @@ async function playTrackOn(track, index, side) {
     hidePlaybackLoading();
     return toast(e.message, 'error');
   }
-  if (gen !== state._trackGen) return;
+  if (gen !== state._trackGen) {
+    cancelCoreTransition();
+    el.playbackRate = 1;
+    el.volume = preferredVolume;
+    updateVolUI(preferredVolume);
+    return;
+  }
 
   if (isB && state.hlsB) { state.hlsB.destroy(); state.hlsB = null; }
   if (!isB && state.hls) { state.hls.destroy(); state.hls = null; }
@@ -1953,7 +1965,7 @@ function renderNowPlaying() {
   updateBgState();
   syncVideo();
   renderCustomCover();
-  updateVolUI(audio.volume);
+  updateVolUI(preferredVolume);
   refreshFavUI();
   updateLibraryButtonState();
   renderQueue();
@@ -6776,7 +6788,7 @@ function wireEvents() {
     preferredVolume = settings.keepVolume && Number.isFinite(saved) ? saved : 1;
     audio.volume = preferredVolume;
     audioB.volume = audio.volume;
-    updateVolUI(audio.volume);
+    updateVolUI(preferredVolume);
   })();
 
   // Перемотка в нижней панели
