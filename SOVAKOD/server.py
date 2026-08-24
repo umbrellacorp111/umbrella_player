@@ -242,13 +242,17 @@ def _mb_rate_limit() -> None:
 
 
 def _yt_cookies_options() -> dict:
-    for name in ("cookies.txt", "youtube_cookies.txt", "cookies_youtube.txt"):
-        p = APP_DATA_DIR / name
+    candidates = [APP_DATA_DIR / n for n in ("cookies.txt", "youtube_cookies.txt", "cookies_youtube.txt")]
+    candidates += [Path("/etc/secrets/cookies.txt"), Path("/etc/secrets/youtube_cookies.txt")]
+    for p in candidates:
         if p.is_file() and p.stat().st_size > 0:
+            log.info("Using cookies file: %s (%d bytes)", p, p.stat().st_size)
             return {"cookiefile": str(p)}
     env_cookie = os.getenv("YT_COOKIES_FILE", "").strip()
     if env_cookie and Path(env_cookie).is_file():
+        log.info("Using cookies file from env: %s", env_cookie)
         return {"cookiefile": env_cookie}
+    log.warning("No cookies file found (checked %s)", ", ".join(str(c) for c in candidates))
     return {}
 
 
@@ -839,7 +843,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             ),
             "extractor_args": {
                 "youtube": {
-                    "player_client": [player_client],
+                    "player_client": [player_client] if not _yt_cookies_options() else ["web"],
                 },
             },
             "quiet": True,
