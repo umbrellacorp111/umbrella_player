@@ -1262,12 +1262,26 @@ class AppHandler(SimpleHTTPRequestHandler):
             return None
 
     def _genius_fetch(self, track: str, artist: str) -> dict | None:
-        q = f"{track} {artist}".strip()
-        if not q:
+        raw_q = f"{track} {artist}".strip()
+        if not raw_q:
             return None
+        q = re.sub(r'^\s*\d+[\.\)]\s*', '', raw_q)
+        if ' - ' in q:
+            parts = q.split(' - ')
+            q = f"{parts[-1].strip()} {artist}".strip()
+        q = re.sub(r'\s+', ' ', q).strip()
+        if not q:
+            q = raw_q
         try:
             url = f"https://genius.com/api/search/multi?per_page=5&q={urlquote(q)}"
-            req = urllib.request.Request(url, headers={"User-Agent": "UmbrellaPlayer/2.0", "Accept": "application/json"})
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json, text/plain, */*",
+                "Referer": "https://genius.com/",
+                "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+                "X-Requested-With": "XMLHttpRequest",
+            }
+            req = urllib.request.Request(url, headers=headers)
             with _metadata_urlopen(req, timeout=8) as r:
                 data = json.loads(r.read().decode("utf-8", "ignore"))
             hit = None
