@@ -3010,8 +3010,7 @@ async function searchAlbumsUnified(query, gen) {
   const empty = $('#searchEmpty');
   el.innerHTML = '<div class="empty-search" style="padding:30px"><p>Поиск альбомов…</p></div>';
   try {
-    // Настоящие альбомы берём из Deezer; плейлисты YouTube и подборки
-    // SoundCloud идут дополнением, а не основой выдачи.
+    // Настоящие альбомы — Deezer; подборки SoundCloud — дополнением.
     const [dzRes, scRes] = await Promise.allSettled([
       request(`/music/albums?q=${encodeURIComponent(query)}&limit=24`, { timeout: 20000 }),
       request(`/sc/search?q=${encodeURIComponent(query)}&count=15`, { timeout: 40000 }),
@@ -3034,20 +3033,6 @@ async function searchAlbumsUnified(query, gen) {
         source: '',            // пусто -> открывается через showAlbumDetail (Deezer)
         trackCount: a.trackCount || 0,
         _dedupKey: albumKey(a.title, a.artist),
-      }));
-    }
-
-    if (ytRes.status === 'fulfilled' && ytRes.value.playlists) {
-      ytRes.value.playlists.forEach((a) => add({
-        id: `yt_${a.id}`,
-        title: a.title,
-        artist: a.channel || '',
-        cover: a.thumbnail || '',
-        year: '',
-        source: 'youtube',
-        trackCount: a.videoCount || 0,
-        _dedupKey: albumKey(a.title, a.channel),
-        playlistUrl: a.url || '',
       }));
     }
 
