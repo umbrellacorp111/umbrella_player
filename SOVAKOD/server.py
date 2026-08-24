@@ -1364,20 +1364,32 @@ class AppHandler(SimpleHTTPRequestHandler):
                     html = raw.decode("utf-8", "ignore")
             except urllib.error.HTTPError as he:
                 if he.code in (403, 401):
-                    api_path = hit.get("api_path") or ""
-                    if api_path and token:
+                    for proxy in (f"https://api.allorigins.win/raw?url={urlquote(song_url)}", f"https://cc.bingj.com/cache.cgi?d=1&w={urlquote(song_url)}"):
                         try:
-                            api_url = f"https://api.genius.com{api_path}?text_format=plain"
-                            api_headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Authorization": f"Bearer {token}"}
-                            req3 = urllib.request.Request(api_url, headers=api_headers)
-                            with _metadata_urlopen(req3, timeout=8) as r3:
-                                j = json.loads(r3.read().decode("utf-8", "ignore"))
-                            desc = (j.get("response", {}).get("song") or {}).get("description", {}).get("plain") or ""
-                            if desc and len(desc.strip()) > 20:
-                                return {"trackName": track, "artistName": artist, "albumName": "", "duration": 0, "instrumental": False, "syncedLyrics": "", "plainLyrics": desc.strip(), "_source": "genius"}
+                            preq = urllib.request.Request(proxy, headers={"User-Agent": "Mozilla/5.0"})
+                            with _metadata_urlopen(preq, timeout=10) as pr:
+                                html = pr.read().decode("utf-8", "ignore")
+                            if "data-lyrics-container" in html or "Lyrics__Container" in html:
+                                break
                         except Exception:
-                            pass
-                raise
+                            continue
+                    else:
+                        api_path = hit.get("api_path") or ""
+                        if api_path and token:
+                            try:
+                                api_url = f"https://api.genius.com{api_path}?text_format=plain"
+                                api_headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Authorization": f"Bearer {token}"}
+                                req3 = urllib.request.Request(api_url, headers=api_headers)
+                                with _metadata_urlopen(req3, timeout=8) as r3:
+                                    j = json.loads(r3.read().decode("utf-8", "ignore"))
+                                desc = (j.get("response", {}).get("song") or {}).get("description", {}).get("plain") or ""
+                                if desc and len(desc.strip()) > 20:
+                                    return {"trackName": track, "artistName": artist, "albumName": "", "duration": 0, "instrumental": False, "syncedLyrics": "", "plainLyrics": desc.strip(), "_source": "genius"}
+                            except Exception:
+                                pass
+                        raise
+                else:
+                    raise
             m = re.findall(r'data-lyrics-container[^>]*>(.*?)</div>', html, re.S)
             if not m:
                 m = re.findall(r'class="Lyrics__Container[^>]*>(.*?)</div>', html, re.S)
