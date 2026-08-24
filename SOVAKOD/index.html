@@ -1013,6 +1013,7 @@
     });
     document.getElementById('navMixes')?.addEventListener('click',()=>toast('Миксы — скоро','info'));
     document.getElementById('mobileMenu')?.addEventListener('click',()=>document.getElementById('sidebar')?.classList.add('open'));
+    document.querySelectorAll('.nav-link').forEach(b=>b.addEventListener('click',()=>document.getElementById('sidebar')?.classList.remove('open')));
     document.addEventListener('click',e=>{
       const s=document.getElementById('sidebar');
       if(s&&s.classList.contains('open')&&!s.contains(e.target)&&!e.target.closest('#mobileMenu')) s.classList.remove('open');
