@@ -174,6 +174,21 @@ SC_JOBS: dict[str, dict] = {}
 SC_STREAM_LOCKS: dict[str, threading.Lock] = {}
 SC_STREAM_LOCKS_GUARD = threading.Lock()
 SC_JOBS_GUARD = threading.Lock()
+ZVUK_TOKEN = os.getenv("ZVUK_TOKEN", "").strip().lstrip("\ufeff")
+if not ZVUK_TOKEN:
+    try:
+        _tok_file = APP_DATA_DIR / "zvuk_token.txt"
+        if _tok_file.is_file():
+            ZVUK_TOKEN = _tok_file.read_text(encoding="utf-8-sig").strip().lstrip("\ufeff")
+    except Exception:
+        pass
+ZVUK_URL_CACHE: dict[str, tuple[str, float]] = {}
+ZVUK_URL_TTL = 2400
+ZVUK_SEARCH_CACHE: dict[str, tuple[list[dict], float]] = {}
+ZVUK_SEARCH_TTL = 600
+ZVUK_CLIENT_LOCK = threading.Lock()
+ZVUK_CLIENT: object | None = None
+ZVUK_ANON_TOKEN: str | None = None
 MAX_JSON_BODY = 16_384
 MAX_CACHE_ENTRIES = 512
 MAX_ARTIST_IMAGE_BYTES = 8 * 1024 * 1024
@@ -282,7 +297,8 @@ def _cleanup_caches() -> None:
             (AUDIO_FILE_CACHE, AUDIO_FILE_TTL, 1), (YT_FILE_CACHE, YT_FILE_TTL, 1),
             (ARTIST_IMG_CACHE, ARTIST_IMG_TTL, 2), (ARTIST_BIO_CACHE, ARTIST_BIO_TTL, 0),
             (WIKI_PAGE_CACHE, WIKI_PAGE_TTL, 0), (RELATED_IDS_CACHE, RELATED_IDS_TTL, 1),
-            (SC_URL_CACHE, SC_URL_TTL, 2),
+            (SC_URL_CACHE, SC_URL_TTL, 2), (ZVUK_URL_CACHE, ZVUK_URL_TTL, 1),
+            (ZVUK_SEARCH_CACHE, ZVUK_SEARCH_TTL, 1),
         ):
             for key, value in list(cache.items()):
                 timestamp = _cache_timestamp(value, timestamp_index)
@@ -433,6 +449,60 @@ for worker_index in range(2):
     ).start()
 
 
+def _get_zvuk_client():
+    global ZVUK_CLIENT, ZVUK_ANON_TOKEN
+    try:
+        from zvuk_music import Client as ZvukClient
+    except ImportError:
+        return None
+    with ZVUK_CLIENT_LOCK:
+        if ZVUK_CLIENT is not None:
+            return ZVUK_CLIENT
+        token = ZVUK_TOKEN
+        if not token:
+            try:
+                if ZVUK_ANON_TOKEN:
+                    token = ZVUK_ANON_TOKEN
+                else:
+                    token = ZvukClient.get_anonymous_token()
+                    ZVUK_ANON_TOKEN = token
+                    log.info("Zvuk anonymous token obtained")
+            except Exception as e:
+                log.warning("Zvuk anon token failed: %s", e)
+                return None
+        try:
+            ZVUK_CLIENT = ZvukClient(token=token)
+            return ZVUK_CLIENT
+        except Exception as e:
+            log.warning("Zvuk client init failed: %s", e)
+            return None
+
+
+def _zvuk_get_stream_url(track_id: str) -> str:
+    cached = ZVUK_URL_CACHE.get(track_id)
+    now = time.time()
+    if cached and (now - cached[1]) < ZVUK_URL_TTL:
+        return cached[0]
+    client = _get_zvuk_client()
+    if client is None:
+        raise RuntimeError("Zvuk не настроен (нет токена и не удалось получить анонимный)")
+    url = ""
+    try:
+        from zvuk_music import Quality
+        url = client.get_stream_url(track_id, quality=Quality.MID)
+    except Exception as e:
+        log.info("Zvuk MID failed for %s: %s, trying HIGH fallback", track_id, e)
+        try:
+            from zvuk_music import Quality as Q2
+            url = client.get_stream_url(track_id, quality=Q2.MID)
+        except Exception:
+            raise
+    if not url:
+        raise RuntimeError("Не удалось получить ссылку Zvuk")
+    ZVUK_URL_CACHE[track_id] = (url, now)
+    _trim_cache(ZVUK_URL_CACHE, 1)
+    return url
+
 
 class AppHandler(SimpleHTTPRequestHandler):
     server_version = "UmbrellaUniversalMusic/2.0"
@@ -507,6 +577,15 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if route == "/api/sc/file":
             self.handle_sc_file(parse_qs(parsed.query))
+            return
+        if route == "/api/zvuk/search":
+            self.handle_zvuk_search(parse_qs(parsed.query))
+            return
+        if route == "/api/zvuk/resolve":
+            self.handle_zvuk_resolve(parse_qs(parsed.query))
+            return
+        if route == "/api/zvuk/stream":
+            self.handle_zvuk_stream(parse_qs(parsed.query))
             return
         if route.startswith("/api/"):
             self.send_json({"error": f"Маршрут не найден: {route}"}, HTTPStatus.NOT_FOUND)
@@ -2271,6 +2350,126 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": True})
         except OSError as e:
             self.send_json({"error": f"Не удалось удалить: {e}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def handle_zvuk_search(self, query: dict[str, list[str]]) -> None:
+        text = query.get("q", [""])[0].lstrip("\ufeff").strip()
+        if not text:
+            self.send_json({"error": "Пустой поисковый запрос"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            count = min(max(int(query.get("count", ["18"])[0]), 1), 30)
+        except ValueError:
+            count = 18
+        cache_key = f"{text.lower()}|{count}"
+        now = time.time()
+        cached = ZVUK_SEARCH_CACHE.get(cache_key)
+        if cached and (now - cached[1]) < ZVUK_SEARCH_TTL:
+            self.send_json({"tracks": cached[0]})
+            return
+        client = _get_zvuk_client()
+        if client is None:
+            self.send_json({"error": "Zvuk не доступен: pip install zvuk-music и токен (ZVUK_TOKEN или анонимный)"}, HTTPStatus.SERVICE_UNAVAILABLE)
+            return
+        try:
+            result = client.search(text, limit=count)
+            items = []
+            if result and result.tracks and result.tracks.items:
+                items = result.tracks.items
+            if not items:
+                qs = client.quick_search(text, limit=count)
+                if qs and qs.tracks:
+                    items = qs.tracks
+            tracks = []
+            for t in items[:count]:
+                try:
+                    tid = str(getattr(t, "id", ""))
+                    if not tid:
+                        continue
+                    title = getattr(t, "title", "") or ""
+                    artist = ""
+                    try:
+                        artist = t.get_artists_str() if hasattr(t, "get_artists_str") else ", ".join(a.title for a in getattr(t, "artists", []))
+                    except Exception:
+                        artist = ""
+                    duration = int(getattr(t, "duration", 0) or 0)
+                    cover = ""
+                    try:
+                        cover = t.get_cover_url(400) if hasattr(t, "get_cover_url") else ""
+                    except Exception:
+                        cover = ""
+                    if not cover:
+                        try:
+                            rel = getattr(t, "release", None)
+                            if rel and getattr(rel, "image", None):
+                                cover = rel.image.get_url(400, 400)
+                        except Exception:
+                            cover = ""
+                    tracks.append({"id": tid, "title": title, "artist": artist, "thumbnail": cover, "duration": duration, "source": "zvuk"})
+                except Exception:
+                    continue
+            ZVUK_SEARCH_CACHE[cache_key] = (tracks, now)
+            _trim_cache(ZVUK_SEARCH_CACHE, 1)
+            self.send_json({"tracks": tracks})
+        except Exception as error:
+            log.exception("Zvuk search failed for %r", text)
+            self.send_json({"error": f"Ошибка поиска Zvuk: {error}"}, HTTPStatus.BAD_GATEWAY)
+
+    def handle_zvuk_resolve(self, query: dict[str, list[str]]) -> None:
+        track_id = query.get("trackId", [""])[0].strip() or query.get("id", [""])[0].strip()
+        if not track_id:
+            self.send_json({"error": "trackId обязателен"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            url = _zvuk_get_stream_url(track_id)
+            self.send_json({"url": url, "trackId": track_id})
+        except Exception as error:
+            log.warning("Zvuk resolve failed for %s: %s", track_id, error)
+            self.send_json({"error": f"Ошибка Zvuk resolve: {error}"}, HTTPStatus.BAD_GATEWAY)
+
+    def handle_zvuk_stream(self, query: dict[str, list[str]]) -> None:
+        track_id = query.get("trackId", [""])[0].strip() or query.get("id", [""])[0].strip()
+        if not track_id:
+            self.send_response(HTTPStatus.BAD_REQUEST)
+            self.end_headers()
+            return
+        try:
+            audio_url = _zvuk_get_stream_url(track_id)
+        except Exception as error:
+            log.warning("Zvuk stream url failed for %s: %s", track_id, error)
+            self.send_response(HTTPStatus.BAD_GATEWAY)
+            self.end_headers()
+            return
+        try:
+            range_header = self.headers.get("Range")
+            upstream_headers = {"User-Agent": "Mozilla/5.0", "Accept": "*/*"}
+            if range_header:
+                upstream_headers["Range"] = range_header
+            req = urllib.request.Request(audio_url, headers=upstream_headers)
+            with urllib.request.urlopen(req, timeout=15) as upstream:
+                status = HTTPStatus(upstream.status if upstream.status in (200, 206) else 200)
+                self.send_response(status)
+                ctype = upstream.headers.get_content_type() or "audio/mpeg"
+                self.send_header("Content-Type", ctype)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Cache-Control", "no-store")
+                for h in ("Content-Length", "Content-Range", "Accept-Ranges"):
+                    if h in upstream.headers:
+                        self.send_header(h, upstream.headers[h])
+                if "Accept-Ranges" not in upstream.headers:
+                    self.send_header("Accept-Ranges", "bytes")
+                self.end_headers()
+                while True:
+                    chunk = upstream.read(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except Exception as error:
+            log.warning("Zvuk proxy stream error for %s: %s", track_id, error)
+            try:
+                self.send_response(HTTPStatus.BAD_GATEWAY)
+                self.end_headers()
+            except Exception:
+                pass
 
     def _serve_file_stream(self, file_path: str, content_type: str) -> None:
         file_size = os.path.getsize(file_path)

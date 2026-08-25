@@ -345,6 +345,8 @@ let favorites = loadJSON(FAV_KEY, []);
 
 function favKey(track) {
   if (track.videoId) return `yt:${track.videoId}`;
+  if (track.zvukId) return `zvuk:${track.zvukId}`;
+  if (track.scId) return `sc:${track.scId}`;
   if (track.dbId) return `local:${track.dbId}`;
   return `local:${(track.title || '').toLowerCase()}|${(track.artist || '').toLowerCase()}`;
 }
@@ -370,6 +372,8 @@ function toggleFav(track) {
       album: track.album || '',
       source: track.source || 'local',
       videoId: track.videoId || null,
+      zvukId: track.zvukId || track.id || null,
+      scId: track.scId || null,
       dbId: track.dbId || track.id || null,
       thumbnail: track.thumbnail || track.cover || '',
       duration: track.duration || 0,
@@ -386,7 +390,7 @@ function toggleFav(track) {
 function favRecordToTrack(f) {
   return {
     title: f.title, artist: f.artist, album: f.album,
-    source: f.source, videoId: f.videoId, dbId: f.dbId,
+    source: f.source, videoId: f.videoId, zvukId: f.zvukId, scId: f.scId, dbId: f.dbId,
     thumbnail: f.thumbnail, duration: f.duration, color: f.color || coverGradient(0),
   };
 }
@@ -426,6 +430,9 @@ function trackSnapshot(track) {
     album: track.album || '',
     source: track.source || 'local',
     videoId: track.videoId || null,
+    zvukId: track.zvukId || track.id || null,
+    scId: track.scId || null,
+    scUrl: track.scUrl || track.url || null,
     dbId: track.dbId || track.id || null,
     thumbnail: track.thumbnail || '',
     duration: track.duration || 0,
@@ -539,13 +546,14 @@ const HIST_KEY = 'umbrella_history';
 let history = loadJSON(HIST_KEY, []);
 
 function addHistory(track) {
-  const key = track.scUrl || track.scId || track.videoId || `${track.title}|${track.artist}`;
-  history = history.filter((h) => (h.scUrl || h.scId || h.videoId || `${h.title}|${h.artist}`) !== key);
+  const key = track.zvukId || track.scUrl || track.scId || track.videoId || `${track.title}|${track.artist}`;
+  history = history.filter((h) => (h.zvukId || h.scUrl || h.scId || h.videoId || `${h.title}|${h.artist}`) !== key);
   history.unshift({
     title: track.title || 'Без названия',
     artist: track.artist || 'Неизвестный исполнитель',
     source: track.source || 'local',
     videoId: track.videoId || null,
+    zvukId: track.zvukId || track.id || null,
     scUrl: track.scUrl || track.url || null,
     scId: track.scId || null,
     thumbnail: track.thumbnail || '',
@@ -1592,6 +1600,11 @@ async function resolveTrack(track) {
     if (track._blobUrl) URL.revokeObjectURL(track._blobUrl);
     track._blobUrl = URL.createObjectURL(blob);
     return track._blobUrl;
+  }
+  if (track.source === 'zvuk') {
+    const zid = track.zvukId || track.id;
+    if (!zid) throw new Error('Нет ID трека Zvuk');
+    return `${API}/zvuk/stream?trackId=${encodeURIComponent(zid)}`;
   }
   if (track.source === 'soundcloud') {
     if (track.path) return `${API}/sc/file?path=${encodeURIComponent(track.path)}`;
@@ -2723,6 +2736,10 @@ async function searchSC(query, count = 20) {
   const res = await request(`/sc/search?q=${encodeURIComponent(query)}&count=${count}`, { timeout: 60000 });
   return res.tracks || [];
 }
+async function searchZvuk(query, count = 18) {
+  const res = await request(`/zvuk/search?q=${encodeURIComponent(query)}&count=${count}`, { timeout: 60000 });
+  return (res.tracks || []).map((t) => ({ ...t, source: 'zvuk', zvukId: t.id, thumbnail: t.thumbnail || '', duration: t.duration || 0 }));
+}
 async function searchYouTube(query, count = 20) { return searchSC(query, count); }
 
 async function fetchRelatedTracksSC(artist, title) {
@@ -2957,6 +2974,7 @@ async function performSearch(query) {
   const isAlbums = source === 'albums';
   const isPlaylists = source === 'playlists';
   const isSc = source === 'soundcloud';
+  const isZvuk = source === 'zvuk';
   const isYt = source === 'youtube';
   $('#searchResults').hidden = isAlbums || isPlaylists;
   $('#albumResults').hidden = !isAlbums;
@@ -2969,6 +2987,18 @@ async function performSearch(query) {
       await searchAlbumsUnified(query, gen);
     } else if (isPlaylists) {
       await searchPlaylistsUnified(query, gen);
+    } else if (isZvuk) {
+      const data = await request(`/zvuk/search?q=${encodeURIComponent(query)}&count=18`, { timeout: 60000 });
+      if (searchStale(gen, source)) return;
+      const tracks = (data.tracks || []).map((t) => ({ ...t, source: 'zvuk', zvukId: t.id }));
+      state.searchResults = tracks;
+      $('#searchEmpty').hidden = tracks.length > 0;
+      $('#searchResults').innerHTML = tracks.length
+        ? `<div class="track-list">${tracks.map((t, i) => trackRow(t, i, 'search')).join('')}</div>`
+        : '<div class="empty-search"><h2>Ничего не найдено</h2><p>Попробуйте изменить запрос.</p></div>';
+      if (window.gsap && tracks.length && !reduceMotion()) {
+        gsap.fromTo('#searchResults .track-row', { opacity: 0, y: 14, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.3, ease: 'power2.out', stagger: 0.03, clearProps: 'transform' });
+      }
     } else if (isSc) {
       const data = await request(`/sc/search?q=${encodeURIComponent(query)}&count=18`, { timeout: 60000 });
       if (searchStale(gen, source)) return;
