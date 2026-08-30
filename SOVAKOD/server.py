@@ -30,9 +30,36 @@ try:
 except ImportError:
     yt_dlp = None
 
-HOST = os.getenv("HOST", "127.0.0.1")
-PORT = int(os.getenv("PORT", "8000"))
+# --- Единый источник конфигурации (см. config.py) ---
+# Импортируем всё из config.py, чтобы не дублировать хардкод.
+from config import (
+    AUDIODB_BASE,
+    DEEZER_API_BASE,
+    DEFAULT_HOST as HOST,
+    DEFAULT_PORT as PORT,
+    DEFAULT_UA,
+    GENIUS_API_BASE,
+    GENIUS_WEB_BASE,
+    LRCLIB_BASE,
+    MB_BASE,
+    MB_UA as _MB_UA_FALLBACK,  # используется ниже, если не переопределено
+    PYPI_BASE,
+    SERVER_VERSION,
+    STREAM_CHUNK_SIZE,
+    WIKIDATA_BASE,
+    WIKIMEDIA_BASE,
+    YT_BASE,
+)
+
 ROOT = Path(os.getenv("APP_ROOT", str(Path(__file__).resolve().parent)))
+# MusicBrainz UA — берём из config, но оставляем возможность переопределить
+MB_UA = os.getenv("MB_UA", _MB_UA_FALLBACK)
+
+# Compiled regexes (avoid recompilation per request)
+_RE_LYRICS_CONTAINER = re.compile(r'data-lyrics-container="true"')
+_RE_HTML_TAG = re.compile(r"<[^>]+>")
+_RE_MULTI_SPACE = re.compile(r"\s+")
+_RE_LEADING_NUM = re.compile(r"^\s*\d+[\.\)]\s*")
 def _best_thumbnail(thumbnails) -> str:
     """Выбирает самое большое изображение из списка превью (yt-dlp возвращает
     их от меньшего к большему). Возвращает URL или пустую строку."""
@@ -95,12 +122,36 @@ def _force_utf8_stdio() -> None:
         sys.__stderr__ = _NullWriter()
 
 
+# Импорт TTL и лимитов из единого config.py (не дублировать хардкод)
+from config import (
+    ARTIST_BIO_TTL,
+    ARTIST_IMG_TTL,
+    AUDIO_FILE_TTL,
+    BIND_RETRIES,
+    CACHE_CLEANUP_INTERVAL,
+    EXTERNAL_API_CONCURRENCY,
+    LYRICS_TTL,
+    MAX_ARTIST_IMAGE_BYTES,
+    MAX_CACHE_ENTRIES,
+    MAX_JSON_BODY,
+    RELATED_IDS_TTL,
+    SC_DOWNLOAD_QUEUE_SIZE,
+    SC_DOWNLOAD_WORKERS,
+    SC_JOB_TTL,
+    SC_URL_TTL,
+    WIKI_PAGE_TTL,
+    YT_BLOCK_COOLDOWN,
+    YT_DLP_CONCURRENCY,
+    YT_FILE_TTL,
+    YT_URL_TTL,
+    ZVUK_SEARCH_TTL,
+    ZVUK_URL_TTL,
+)
+
 _force_utf8_stdio()
 YT_URL_CACHE: dict[str, tuple[str, float]] = {}
-YT_URL_TTL = 900  # 15 минут вместо 30 — ссылки YouTube протухают быстрее
 YT_EXTRACT_LOCK = threading.Lock()
 YT_BLOCKED_UNTIL = 0.0
-YT_BLOCK_COOLDOWN = 2 * 60
 YT_SEARCH_VALIDATE = os.getenv("UMBRELLA_VALIDATE_SEARCH", "0").strip() not in ("0", "false", "False", "")
 CACHE_LOCK = threading.RLock()
 MB_LAST_REQUEST = 0.0
@@ -108,19 +159,12 @@ MB_LOCK = threading.Lock()
 YT_URL_CACHE_LOCK = threading.Lock()
 LYRICS_CACHE_LOCK = threading.Lock()
 LYRICS_CACHE: dict[str, dict] = {}
-LYRICS_TTL = 3600
 AUDIO_FILE_CACHE: dict[str, tuple[str, float]] = {}
-AUDIO_FILE_TTL = 1800
 YT_FILE_CACHE: dict[str, tuple[str, float]] = {}
-YT_FILE_TTL = 7 * 24 * 3600
 ARTIST_IMG_CACHE: dict[str, tuple[bytes, str, float]] = {}
-ARTIST_IMG_TTL = 86400
 ARTIST_BIO_CACHE: dict[str, tuple[float, dict]] = {}
-ARTIST_BIO_TTL = 86400
 WIKI_PAGE_CACHE: dict[str, tuple[float, dict]] = {}
-WIKI_PAGE_TTL = 86400
 RELATED_IDS_CACHE: dict[str, tuple[list[str], float]] = {}
-RELATED_IDS_TTL = 86400
 # Папка рядом с .exe (или со скриптом) — сюда кладётся artist_overrides.json,
 # который можно править без пересборки.
 _ENV_DATA_DIR = os.getenv("APP_DATA_DIR", "").strip()
@@ -139,8 +183,6 @@ except OSError:
 ARTIST_OVERRIDES_PATH = APP_DATA_DIR / "artist_overrides.json"
 YT_CACHE_DIR = APP_DATA_DIR / "_yt_cache"
 ARTIST_OVERRIDES_CACHE: dict[str, object] = {"mtime": 0.0, "data": {}}
-# MusicBrainz требует осмысленный User-Agent с контактом.
-MB_UA = "UmbrellaPlayer/1.0 (personal music player)"
 log = logging.getLogger("umbrella")
 try:
     _log_handler = logging.FileHandler(str(APP_DATA_DIR / "umbrella.log"), encoding="utf-8")
@@ -168,7 +210,6 @@ except Exception as _e:
 SC_DIR = APP_DATA_DIR / "sc_music"
 SC_CACHE_DIR = APP_DATA_DIR / "_sc_cache"
 SC_URL_CACHE: dict[str, tuple[str, str, float]] = {}  # track_url -> (audio_url, kind, ts)
-SC_URL_TTL = 3000  # ~50 мин: подписанные URL протухают за ~1 час
 SC_JOB_SEQ = itertools.count(1)
 SC_JOBS: dict[str, dict] = {}
 SC_STREAM_LOCKS: dict[str, threading.Lock] = {}
@@ -183,19 +224,14 @@ if not ZVUK_TOKEN:
     except Exception:
         pass
 ZVUK_URL_CACHE: dict[str, tuple[str, float]] = {}
-ZVUK_URL_TTL = 2400
 ZVUK_SEARCH_CACHE: dict[str, tuple[list[dict], float]] = {}
-ZVUK_SEARCH_TTL = 600
 ZVUK_CLIENT_LOCK = threading.Lock()
 ZVUK_CLIENT: object | None = None
 ZVUK_ANON_TOKEN: str | None = None
-MAX_JSON_BODY = 16_384
-MAX_CACHE_ENTRIES = 512
-MAX_ARTIST_IMAGE_BYTES = 8 * 1024 * 1024
 API_TOKEN = secrets.token_urlsafe(32)
-YT_DLP_LIMIT = threading.BoundedSemaphore(3)
-EXTERNAL_API_LIMIT = threading.BoundedSemaphore(8)
-SC_DOWNLOAD_QUEUE: queue.Queue[dict | None] = queue.Queue(maxsize=8)
+YT_DLP_LIMIT = threading.BoundedSemaphore(YT_DLP_CONCURRENCY)
+EXTERNAL_API_LIMIT = threading.BoundedSemaphore(EXTERNAL_API_CONCURRENCY)
+SC_DOWNLOAD_QUEUE: queue.Queue[dict | None] = queue.Queue(maxsize=SC_DOWNLOAD_QUEUE_SIZE)
 SERVER_STOPPING = threading.Event()
 
 
@@ -290,7 +326,7 @@ def _yt_cookies_options() -> dict:
 
 def _cleanup_caches() -> None:
     while True:
-        time.sleep(300)
+        time.sleep(CACHE_CLEANUP_INTERVAL)
         now = time.time()
         for cache, ttl, timestamp_index in (
             (YT_URL_CACHE, YT_URL_TTL, 1), (LYRICS_CACHE, LYRICS_TTL, 0),
@@ -314,7 +350,7 @@ def _cleanup_caches() -> None:
             _trim_cache(cache, timestamp_index)
         with SC_JOBS_GUARD:
             for key, job in list(SC_JOBS.items()):
-                if job.get("finished") and now - job["finished"] > 900:
+                if job.get("finished") and now - job["finished"] > SC_JOB_TTL:
                     SC_JOBS.pop(key, None)
         try:
             for cache_dir, ttl in ((YT_CACHE_DIR, YT_FILE_TTL), (SC_CACHE_DIR, AUDIO_FILE_TTL)):
@@ -441,7 +477,7 @@ def _sc_download_worker() -> None:
             SC_DOWNLOAD_QUEUE.task_done()
 
 
-for worker_index in range(2):
+for worker_index in range(SC_DOWNLOAD_WORKERS):
     threading.Thread(
         target=_sc_download_worker,
         daemon=True,
@@ -504,8 +540,36 @@ def _zvuk_get_stream_url(track_id: str) -> str:
     return url
 
 
+def _proxy_stream(handler: SimpleHTTPRequestHandler, upstream, content_type: str | None = None) -> None:
+    """Forward upstream response to client with unified headers and chunked copy."""
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+    handler.send_header("Access-Control-Allow-Headers", "*")
+    handler.send_header("Cache-Control", "no-store")
+    if content_type:
+        handler.send_header("Content-Type", content_type)
+    else:
+        ctype = upstream.headers.get_content_type() or "application/octet-stream"
+        handler.send_header("Content-Type", ctype)
+    if "Content-Length" in getattr(upstream, "headers", {}):
+        handler.send_header("Content-Length", upstream.headers["Content-Length"])
+    if "Content-Range" in getattr(upstream, "headers", {}):
+        handler.send_header("Content-Range", upstream.headers["Content-Range"])
+    if "Accept-Ranges" in getattr(upstream, "headers", {}):
+        handler.send_header("Accept-Ranges", upstream.headers["Accept-Ranges"])
+    else:
+        handler.send_header("Accept-Ranges", "bytes")
+    handler.end_headers()
+    while True:
+        chunk = upstream.read(STREAM_CHUNK_SIZE)
+        if not chunk:
+            break
+        handler.wfile.write(chunk)
+        handler.wfile.flush()
+
+
 class AppHandler(SimpleHTTPRequestHandler):
-    server_version = "UmbrellaUniversalMusic/2.0"
+    server_version = SERVER_VERSION
 
     def translate_path(self, path: str) -> str:
         parsed = urlparse(path).path
@@ -934,7 +998,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             "no_warnings": True,
             "socket_timeout": 20,
             "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": DEFAULT_UA,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-us,en;q=0.5",
                 "Sec-Fetch-Mode": "navigate",
@@ -1080,7 +1144,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 f.seek(start)
                 remaining = length
                 while remaining > 0:
-                    chunk = f.read(min(65536, remaining))
+                    chunk = f.read(min(STREAM_CHUNK_SIZE, remaining))
                     if not chunk:
                         break
                     self.wfile.write(chunk)
@@ -1094,7 +1158,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             with open(file_path, "rb") as f:
                 while True:
-                    chunk = f.read(65536)
+                    chunk = f.read(STREAM_CHUNK_SIZE)
                     if not chunk:
                         break
                     self.wfile.write(chunk)
@@ -1144,7 +1208,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 range_header = self.headers.get("Range")
                 # Расширенные заголовки для обхода блокировки YouTube
                 upstream_headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "User-Agent": DEFAULT_UA,
                     "Accept": "*/*",
                     "Accept-Language": "en-US,en;q=0.9",
                     "Origin": "https://www.youtube.com",
@@ -1152,35 +1216,12 @@ class AppHandler(SimpleHTTPRequestHandler):
                 }
                 if range_header:
                     upstream_headers["Range"] = range_header
-                
+
                 req = urllib.request.Request(audio_url, headers=upstream_headers)
                 with urllib.request.urlopen(req, timeout=15) as upstream:
                     status = HTTPStatus(upstream.status if upstream.status in (200, 206) else 200)
                     self.send_response(status)
-                    # yt-dlp предпочитает M4A, но отдельные ролики доступны только
-                    # как WebM/Opus. Нельзя объявлять любой поток M4A: Chromium
-                    # тогда отказывается его декодировать как неподдерживаемый файл.
-                    content_type = upstream.headers.get_content_type() or "application/octet-stream"
-                    self.send_header("Content-Type", content_type)
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                    self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-                    self.send_header("Access-Control-Allow-Headers", "*")
-                    self.send_header("Cache-Control", "no-store")
-                    if "Content-Length" in getattr(upstream, "headers", {}):
-                        self.send_header("Content-Length", upstream.headers["Content-Length"])
-                    if "Content-Range" in getattr(upstream, "headers", {}):
-                        self.send_header("Content-Range", upstream.headers["Content-Range"])
-                    if "Accept-Ranges" in getattr(upstream, "headers", {}):
-                        self.send_header("Accept-Ranges", upstream.headers["Accept-Ranges"])
-                    else:
-                        self.send_header("Accept-Ranges", "bytes")
-                    self.end_headers()
-                    while True:
-                        chunk = upstream.read(65536)
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
-                        self.wfile.flush()
+                    _proxy_stream(self, upstream)
                 return  # Успешно — выходим
                 
             except urllib.error.HTTPError as error:
@@ -1253,33 +1294,14 @@ class AppHandler(SimpleHTTPRequestHandler):
                 if ext in ("mp3",): ctype = "audio/mpeg"
                 elif ext in ("webm",): ctype = "audio/webm"
                 range_header = self.headers.get("Range")
-                upstream_headers = {"User-Agent": "Mozilla/5.0"}
+                upstream_headers = {"User-Agent": DEFAULT_UA}
                 if range_header:
                     upstream_headers["Range"] = range_header
                 req = urllib.request.Request(audio_url, headers=upstream_headers)
                 with urllib.request.urlopen(req, timeout=30) as upstream:
                     status = HTTPStatus(upstream.status if upstream.status in (200, 206) else 200)
                     self.send_response(status)
-                    self.send_header("Content-Type", ctype)
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                    self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-                    self.send_header("Access-Control-Allow-Headers", "*")
-                    self.send_header("Cache-Control", "no-store")
-                    if "Content-Length" in getattr(upstream, "headers", {}):
-                        self.send_header("Content-Length", upstream.headers["Content-Length"])
-                    if "Content-Range" in getattr(upstream, "headers", {}):
-                        self.send_header("Content-Range", upstream.headers["Content-Range"])
-                    if "Accept-Ranges" in getattr(upstream, "headers", {}):
-                        self.send_header("Accept-Ranges", upstream.headers["Accept-Ranges"])
-                    else:
-                        self.send_header("Accept-Ranges", "bytes")
-                    self.end_headers()
-                    while True:
-                        chunk = upstream.read(65536)
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
-                        self.wfile.flush()
+                    _proxy_stream(self, upstream, content_type=ctype)
         except Exception as error:
             log.warning("Music stream error: %s", error)
             try:
@@ -1306,7 +1328,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         lrclib_id = best.get("id")
         if not lrclib_id:
             return best
-        detail = self._lrclib_request(f"https://lrclib.net/api/get/{lrclib_id}")
+        detail = self._lrclib_request(f"{LRCLIB_BASE}/api/get/{lrclib_id}")
         return detail or best
 
     def _syncedlyrics_fetch(self, track: str, artist: str) -> dict | None:
@@ -1350,8 +1372,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             return None
         try:
             if token:
-                url = f"https://api.genius.com/search?per_page=5&q={urlquote(q)}"
-                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json", "Authorization": f"Bearer {token}"}
+                url = f"{GENIUS_API_BASE}/search?per_page=5&q={urlquote(q)}"
+                headers = {"User-Agent": DEFAULT_UA, "Accept": "application/json", "Authorization": f"Bearer {token}"}
                 req = urllib.request.Request(url, headers=headers)
                 with _metadata_urlopen(req, timeout=8) as r:
                     data = json.loads(r.read().decode("utf-8", "ignore"))
@@ -1362,8 +1384,8 @@ class AppHandler(SimpleHTTPRequestHandler):
                             return hit
                 return None
             else:
-                url = f"https://genius.com/api/search/multi?per_page=5&q={urlquote(q)}"
-                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json, text/plain, */*", "Referer": "https://genius.com/", "Accept-Language": "en-US,en;q=0.9,ru;q=0.8", "X-Requested-With": "XMLHttpRequest"}
+                url = f"{GENIUS_WEB_BASE}/api/search/multi?per_page=5&q={urlquote(q)}"
+                headers = {"User-Agent": DEFAULT_UA, "Accept": "application/json, text/plain, */*", "Referer": f"{GENIUS_WEB_BASE}/", "Accept-Language": "en-US,en;q=0.9,ru;q=0.8", "X-Requested-With": "XMLHttpRequest"}
                 req = urllib.request.Request(url, headers=headers)
                 with _metadata_urlopen(req, timeout=8) as r:
                     data = json.loads(r.read().decode("utf-8", "ignore"))
@@ -1379,10 +1401,10 @@ class AppHandler(SimpleHTTPRequestHandler):
             return None
 
     def _genius_fetch(self, track: str, artist: str) -> dict | None:
-        clean_track = re.sub(r'^\s*\d+[\.\)]\s*', '', track or "").strip()
+        clean_track = _RE_LEADING_NUM.sub('', track or "").strip()
         if ' - ' in clean_track:
             clean_track = clean_track.split(' - ')[-1].strip()
-        clean_track = re.sub(r'\s+', ' ', clean_track).strip()
+        clean_track = _RE_MULTI_SPACE.sub(' ', clean_track).strip()
         raw_q = f"{track} {artist}".strip()
         token = os.getenv("GENIUS_TOKEN", "").strip()
         queries: list[str] = []
@@ -1395,11 +1417,10 @@ class AppHandler(SimpleHTTPRequestHandler):
             queries.append(tr)
             if artist:
                 queries.append(f"{tr} {artist}")
-        queries.append("political corpse")
         seen: set[str] = set()
         uniq: list[str] = []
         for q in queries:
-            q = re.sub(r'\s+', ' ', q).strip()
+            q = _RE_MULTI_SPACE.sub(' ', q).strip()
             if q and q.lower() not in seen:
                 seen.add(q.lower())
                 uniq.append(q)
@@ -1413,15 +1434,15 @@ class AppHandler(SimpleHTTPRequestHandler):
         if not hit:
             return None
         try:
-            song_url = hit.get("url") or hit.get("path") and f"https://genius.com{hit['path']}"
+            song_url = hit.get("url") or hit.get("path") and f"{GENIUS_WEB_BASE}{hit['path']}"
             if not song_url:
                 return None
             html_headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": DEFAULT_UA,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
                 "Accept-Encoding": "gzip",
-                "Referer": "https://genius.com/",
+                "Referer": f"{GENIUS_WEB_BASE}/",
                 "Cache-Control": "no-cache",
                 "Sec-Fetch-Dest": "document",
                 "Sec-Fetch-Mode": "navigate",
@@ -1445,7 +1466,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 if he.code in (403, 401):
                     for proxy in (f"https://api.allorigins.win/raw?url={urlquote(song_url)}", f"https://cc.bingj.com/cache.cgi?d=1&w={urlquote(song_url)}"):
                         try:
-                            preq = urllib.request.Request(proxy, headers={"User-Agent": "Mozilla/5.0"})
+                            preq = urllib.request.Request(proxy, headers={"User-Agent": DEFAULT_UA})
                             with _metadata_urlopen(preq, timeout=10) as pr:
                                 html = pr.read().decode("utf-8", "ignore")
                             if "data-lyrics-container" in html or "Lyrics__Container" in html:
@@ -1456,8 +1477,8 @@ class AppHandler(SimpleHTTPRequestHandler):
                         api_path = hit.get("api_path") or ""
                         if api_path and token:
                             try:
-                                api_url = f"https://api.genius.com{api_path}?text_format=plain"
-                                api_headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Authorization": f"Bearer {token}"}
+                                api_url = f"{GENIUS_API_BASE}{api_path}?text_format=plain"
+                                api_headers = {"User-Agent": DEFAULT_UA, "Accept": "application/json", "Authorization": f"Bearer {token}"}
                                 req3 = urllib.request.Request(api_url, headers=api_headers)
                                 with _metadata_urlopen(req3, timeout=8) as r3:
                                     j = json.loads(r3.read().decode("utf-8", "ignore"))
@@ -1477,7 +1498,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             text = ""
             for block in m:
                 block = re.sub(r'<br\s*/?>', '\n', block)
-                block = re.sub(r'<[^>]+>', '', block)
+                block = _RE_HTML_TAG.sub('', block)
                 block = block.replace('&amp;', '&').replace('&quot;', '"').replace('&#39;', "'")
                 text += block.strip() + "\n\n"
             text = text.strip()
@@ -1511,7 +1532,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         result = None
         if track and artist and album and duration > 0:
             params = urllib.parse.urlencode({"track_name": track, "artist_name": artist, "album_name": album, "duration": duration})
-            data = self._lrclib_request(f"https://lrclib.net/api/get?{params}")
+            data = self._lrclib_request(f"{LRCLIB_BASE}/api/get?{params}")
             if data and not data.get("notFound") and (data.get("syncedLyrics") or data.get("plainLyrics")):
                 result = data
         if not result:
@@ -1520,7 +1541,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 query_parts.append(artist)
             search_q = " ".join(query_parts)
             params = urllib.parse.urlencode({"q": search_q})
-            search_data = self._lrclib_request(f"https://lrclib.net/api/search?{params}")
+            search_data = self._lrclib_request(f"{LRCLIB_BASE}/api/search?{params}")
             if search_data and isinstance(search_data, list) and search_data:
                 best = self._lrclib_best_match(search_data, duration)
                 if best and (best.get("syncedLyrics") or best.get("plainLyrics")):
@@ -1544,7 +1565,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "plainLyrics": result.get("plainLyrics") or "",
             }
             out["_ts"] = now
-            LYRICS_CACHE[cache_key] = out
+            with LYRICS_CACHE_LOCK:
+                LYRICS_CACHE[cache_key] = out
+                _trim_cache(LYRICS_CACHE, 0)
             self.send_json(out)
         else:
             self.send_json({"notFound": True, "syncedLyrics": "", "plainLyrics": ""})
@@ -1566,8 +1589,8 @@ class AppHandler(SimpleHTTPRequestHandler):
     def _deezer_get(self, path: str) -> dict | None:
         try:
             req = urllib.request.Request(
-                f"https://api.deezer.com{path}",
-                headers={"User-Agent": "UmbrellaPlayer/1.0"},
+                f"{DEEZER_API_BASE}{path}",
+                headers={"User-Agent": MB_UA},
             )
             with _metadata_urlopen(req, timeout=10) as resp:
                 return json.loads(resp.read())
@@ -1630,7 +1653,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             return ""
         # 1) Находим MBID артиста по его ссылке на Deezer (однозначно).
         lookup = self._json_get(
-            f"https://musicbrainz.org/ws/2/url?resource=https://www.deezer.com/artist/{artist_id}&inc=artist-rels&fmt=json",
+            f"{MB_BASE}/ws/2/url?resource=https://www.deezer.com/artist/{artist_id}&inc=artist-rels&fmt=json",
             timeout=5.0, ua=MB_UA,
         )
         mbid = ""
@@ -1645,7 +1668,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         _mb_rate_limit()
         # 2) У артиста берём связь с Wikidata (и заодно возможную прямую картинку).
         art = self._json_get(
-            f"https://musicbrainz.org/ws/2/artist/{mbid}?inc=url-rels&fmt=json",
+            f"{MB_BASE}/ws/2/artist/{mbid}?inc=url-rels&fmt=json",
             timeout=5.0, ua=MB_UA,
         )
         if not art:
@@ -1665,7 +1688,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             return ""
         # 3) Wikidata -> свойство P18 (изображение) -> файл на Викискладе.
         wd = self._json_get(
-            f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json",
+            f"{WIKIDATA_BASE}/wiki/Special:EntityData/{qid}.json",
             timeout=5.0, ua=MB_UA,
         )
         try:
@@ -1680,7 +1703,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         if not fname:
             return ""
         safe = urlquote(fname.replace(" ", "_"))
-        return f"https://commons.wikimedia.org/wiki/Special:FilePath/{safe}?width=600"
+        return f"{WIKIMEDIA_BASE}/wiki/Special:FilePath/{safe}?width=600"
 
     @classmethod
     def _commons_filepath(cls, url: str) -> str:
@@ -1726,8 +1749,8 @@ class AppHandler(SimpleHTTPRequestHandler):
         if not artist_name:
             return ""
         try:
-            url = f"https://www.theaudiodb.com/api/v1/json/2/search.php?s={urlquote(artist_name)}"
-            req = urllib.request.Request(url, headers={"User-Agent": "UmbrellaPlayer/1.0"})
+            url = f"{AUDIODB_BASE}/api/v1/json/2/search.php?s={urlquote(artist_name)}"
+            req = urllib.request.Request(url, headers={"User-Agent": MB_UA})
             with _metadata_urlopen(req, timeout=6) as r:
                 data = json.loads(r.read() or b"{}")
             for a in (data.get("artists") or []):
@@ -1860,7 +1883,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             return []
         try:
             data = self._json_get(
-                f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json",
+                f"{WIKIDATA_BASE}/wiki/Special:EntityData/{qid}.json",
                 timeout=6.0, ua=MB_UA,
             )
             claims = ((data or {}).get("entities") or {}).get(qid, {}).get("claims") or {}
@@ -1891,7 +1914,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         if ids:
             try:
                 ld = self._json_get(
-                    "https://www.wikidata.org/w/api.php?action=wbgetentities&format=json"
+                    f"{WIKIDATA_BASE}/w/api.php?action=wbgetentities&format=json"
                     f"&ids={'|'.join(ids)}&props=labels&languages={lang}%7Cen",
                     timeout=6.0, ua=MB_UA,
                 )
@@ -2441,7 +2464,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         try:
             range_header = self.headers.get("Range")
-            upstream_headers = {"User-Agent": "Mozilla/5.0", "Accept": "*/*"}
+            upstream_headers = {"User-Agent": DEFAULT_UA, "Accept": "*/*"}
             if range_header:
                 upstream_headers["Range"] = range_header
             req = urllib.request.Request(audio_url, headers=upstream_headers)
@@ -2459,7 +2482,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                     self.send_header("Accept-Ranges", "bytes")
                 self.end_headers()
                 while True:
-                    chunk = upstream.read(65536)
+                    chunk = upstream.read(STREAM_CHUNK_SIZE)
                     if not chunk:
                         break
                     self.wfile.write(chunk)
@@ -2511,7 +2534,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 f.seek(start)
                 remaining = length
                 while remaining > 0:
-                    chunk = f.read(min(65536, remaining))
+                    chunk = f.read(min(STREAM_CHUNK_SIZE, remaining))
                     if not chunk:
                         break
                     self.wfile.write(chunk)
@@ -2525,7 +2548,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             with open(file_path, "rb") as f:
                 while True:
-                    chunk = f.read(65536)
+                    chunk = f.read(STREAM_CHUNK_SIZE)
                     if not chunk:
                         break
                     self.wfile.write(chunk)

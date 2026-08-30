@@ -33,6 +33,7 @@ def main() -> None:
     check_and_update(root, storage, logging.getLogger("umbrella"))
 
     from server import HOST, PORT, bind_server
+    from config import WINDOW_HEIGHT, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_WIDTH
 
     server, port = bind_server(PORT)
     if port != PORT:
@@ -45,9 +46,9 @@ def main() -> None:
     window = webview.create_window(
         title="Umbrella Player",
         url=f"http://{HOST}:{port}",
-        width=1280,
-        height=800,
-        min_size=(900, 600),
+        width=WINDOW_WIDTH,
+        height=WINDOW_HEIGHT,
+        min_size=(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT),
         text_select=True,
     )
 

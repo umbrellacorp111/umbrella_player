@@ -37,5 +37,15 @@ server_*.txt
 Thumbs.db
 desktop.ini
 
+# Secrets — never commit bot tokens
+tg_token.txt
+SOVAKOD/tg_token.txt
+**/tg_token.txt
+zvuk_token.txt
+SOVAKOD/zvuk_token.txt
+**/zvuk_token.txt
+cookies.txt
+SOVAKOD/cookies.txt
+
 # Test/runtime leftovers
 SOVAKOD/probe_*.py

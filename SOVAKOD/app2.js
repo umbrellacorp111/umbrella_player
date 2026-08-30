@@ -3,6 +3,38 @@
 
 const API = '/api';
 let apiToken = '';
+
+/* ── Централизованная конфигурация фронта ──────────────────────────
+   Все таймауты, лимиты и визуальные константы — здесь, а не
+   разбросаны магическими числами по файлу. Значения, которые
+   должны совпадать с Python-бэком, помечены «↔ config.py». */
+const API_TIMEOUT = {
+  default: 30000,
+  search: 60000,
+  searchLong: 40000,
+  albums: 20000,
+  status: 10000,
+  library: 15000,
+  resolve: 30000,
+  version: 8000,
+  update: 10000,
+  shutdown: 5000,
+};
+
+// Лимиты и визуальные константы — читаемые имена вместо «34» / «0.65»
+const APP_CONFIG = {
+  particleCount: 34,
+  burstCount: 40,
+  ambientParticles: 30,
+  waveBars: 160,
+  listenLogMax: 3000,        // ↔ LL_MAX — макс записей истории
+  searchHistoryMax: 8,
+  historyMax: 30,
+  recentBlockMax: 4,
+  playlistGridLimit: 4,      // сколько карточек показывать до «Показать всё»
+  heatmapDays: 364,
+  fallbackArtists: ['PHARAOH', 'Boulevard Depo', 'HammAli & Navai', 'Jony', 'Скриптонит', 'Мукка'],
+};
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -74,7 +106,7 @@ function showPlaybackLoading(track) {
   playbackLoadingParticles = [];
   const centerX = window.innerWidth / 2;
   const centerY = window.innerHeight / 2;
-  for (let i = 0; i < 34; i++) {
+  for (let i = 0; i < APP_CONFIG.particleCount; i++) {
     const particle = document.createElement('i');
     const angle = Math.random() * Math.PI * 2;
     const distance = Math.max(window.innerWidth, window.innerHeight) * (.35 + Math.random() * .45);
@@ -286,6 +318,7 @@ function closeModal(result) {
 const DEFAULT_SETTINGS = { visualizer: true, ambient: true, keepVolume: true, autoAdd: false, offline: true, themeAuto: true, themeHue: null, led: true };
 let settings = Object.assign({}, DEFAULT_SETTINGS, loadJSON('umbrella_settings', {}));
 
+// ↔ config.py THEME_PRESETS — при изменении синхронизировать оба файла
 const THEME_PRESETS = [
   { hue: 262, sw: '#8b5cf6', label: 'Фиолетовый' },
   { hue: 222, sw: '#4f8cff', label: 'Синий' },
@@ -560,7 +593,7 @@ function addHistory(track) {
     duration: track.duration || 0,
     at: Date.now(),
   });
-  history = history.slice(0, 30);
+  history = history.slice(0, APP_CONFIG.historyMax);
   saveJSON(HIST_KEY, history);
   renderRecent();
 }
@@ -571,7 +604,7 @@ function renderRecent() {
   if (!block || !row) return;
   if (!history.length) { block.hidden = true; return; }
   block.hidden = false;
-  row.innerHTML = history.slice(0, 4).map((h) => `
+  row.innerHTML = history.slice(0, APP_CONFIG.recentBlockMax).map((h) => `
     <button class="recent-item" data-h="1">
       <span class="recent-ico">${icons.play}</span>
       <span class="recent-body">
@@ -586,7 +619,7 @@ function renderRecent() {
    ============================================================ */
 
 const LL_KEY = 'umbrella_listenlog';
-const LL_MAX = 3000;
+const LL_MAX = APP_CONFIG.listenLogMax;
 let listenLog = loadJSON(LL_KEY, []);
 
 function seedListenLog() {
@@ -629,7 +662,7 @@ let searchHistory = loadJSON(SCH_KEY, []);
 function addSearchHistory(q) {
   searchHistory = searchHistory.filter((s) => s.toLowerCase() !== q.toLowerCase());
   searchHistory.unshift(q);
-  searchHistory = searchHistory.slice(0, 8);
+  searchHistory = searchHistory.slice(0, APP_CONFIG.searchHistoryMax);
   saveJSON(SCH_KEY, searchHistory);
   renderSearchHistory();
 }
@@ -1226,6 +1259,7 @@ function renderDayGrid(rows) {
    Playlists (artists grid)
    ============================================================ */
 
+// ↔ config.py PLAYLIST_GRADIENTS — синхронизировать при изменении
 const PLAYLIST_ARTS = [
   'linear-gradient(145deg,#362a68,#b03066 52%,#111)',
   'linear-gradient(145deg,#cc8a54,#734343 50%,#1f2539)',
@@ -1259,7 +1293,7 @@ function groupArt(group, i) {
 /* Кнопка «Показать всё / Свернуть»: прячется, если разворачивать нечего */
 function syncShowAll(btn, total, expanded) {
   if (!btn) return;
-  btn.hidden = total <= 4;
+  btn.hidden = total <= APP_CONFIG.playlistGridLimit;
   btn.textContent = expanded ? '← Свернуть' : 'Показать всё →';
 }
 
@@ -1280,7 +1314,7 @@ function renderPlaylists() {
     return;
   }
   const all = artistGroups(tracks);
-  const groups = state.heroExpanded ? all : all.slice(0, 4);
+  const groups = state.heroExpanded ? all : all.slice(0, APP_CONFIG.playlistGridLimit);
   syncShowAll($('#showAll'), all.length, state.heroExpanded);
   grid.innerHTML = groups.map((g, i) => {
     const art = groupArt(g, i);
@@ -1310,7 +1344,7 @@ function renderTopArtists() {
     return;
   }
   const ranked = artistGroups(tracks).sort((a, b) => b.indices.length - a.indices.length);
-  const groups = state.artistsExpanded ? ranked : ranked.slice(0, 4);
+  const groups = state.artistsExpanded ? ranked : ranked.slice(0, APP_CONFIG.playlistGridLimit);
   syncShowAll($('#showAllArtists'), ranked.length, state.artistsExpanded);
   row.innerHTML = groups.map((g, i) => {
     const art = groupArt(g, i);
@@ -1370,9 +1404,9 @@ function renderRadioSuggest() {
   if (!box) return;
   const mine = artistGroups(state.tracks)
     .sort((a, b) => b.indices.length - a.indices.length)
-    .slice(0, 6)
+    .slice(0, APP_CONFIG.recentBlockMax + 2)
     .map((g) => g.title);
-  const names = mine.length ? mine : ['PHARAOH', 'Boulevard Depo', 'HammAli & Navai', 'Jony', 'Скриптонит', 'Мукка'];
+  const names = mine.length ? mine : APP_CONFIG.fallbackArtists;
   box.innerHTML = names.map((n) => `<button type="button">${escapeHtml(n)}</button>`).join('');
 }
 
@@ -1584,7 +1618,7 @@ function effectiveDuration() {
 
 async function resolveTrack(track) {
   if ((!track.scUrl && !track.scId && !track.videoId) && track._needsLookup) {
-    const data = await request(`/sc/search?q=${encodeURIComponent(track._needsLookup)}&count=1`, { timeout: 30000 });
+    const data = await request(`/sc/search?q=${encodeURIComponent(track._needsLookup)}&count=1`, { timeout: API_TIMEOUT.default });
     const found = (data.tracks || [])[0];
     if (!found) throw new Error('Трек не найден в Umbrella Search');
     track.scUrl = found.url;
@@ -2047,7 +2081,7 @@ function createPS5Particles(includeAmbient = true) {
   if (!includeAmbient) return;
 
   // 2. Создаем плавающие частицы (появляются сверху, потом летают)
-  const particleCount = 30;
+  const particleCount = APP_CONFIG.ambientParticles;
   for (let i = 0; i < particleCount; i++) {
     const particle = document.createElement('div');
     particle.className = 'ps5-particle ps5-ambient';
@@ -2086,7 +2120,7 @@ function burstPS5Particles() {
   if (!container || reduceMotion()) return;
   // Создаем дополнительные burst частицы
   const hue = extractHue(state.currentTrack?.color);
-  const burstCount = 40;
+  const burstCount = APP_CONFIG.burstCount;
   
   for (let i = 0; i < burstCount; i++) {
     const particle = document.createElement('div');
@@ -2569,7 +2603,7 @@ function detachHls() {
    Waveform
    ============================================================ */
 
-const WAVE_BARS = 160;
+const WAVE_BARS = APP_CONFIG.waveBars;
 const WAVE_PLAYED = '#ffffff';
 const WAVE_LEFT = 'rgba(255,255,255,0.16)';
 
@@ -2733,11 +2767,11 @@ async function request(path, options = {}) {
 }
 
 async function searchSC(query, count = 20) {
-  const res = await request(`/sc/search?q=${encodeURIComponent(query)}&count=${count}`, { timeout: 60000 });
+  const res = await request(`/sc/search?q=${encodeURIComponent(query)}&count=${count}`, { timeout: API_TIMEOUT.search });
   return res.tracks || [];
 }
 async function searchZvuk(query, count = 18) {
-  const res = await request(`/zvuk/search?q=${encodeURIComponent(query)}&count=${count}`, { timeout: 60000 });
+  const res = await request(`/zvuk/search?q=${encodeURIComponent(query)}&count=${count}`, { timeout: API_TIMEOUT.search });
   return (res.tracks || []).map((t) => ({ ...t, source: 'zvuk', zvukId: t.id, thumbnail: t.thumbnail || '', duration: t.duration || 0 }));
 }
 async function searchYouTube(query, count = 20) { return searchSC(query, count); }
@@ -2745,7 +2779,7 @@ async function searchYouTube(query, count = 20) { return searchSC(query, count);
 async function fetchRelatedTracksSC(artist, title) {
   try {
     const q = [artist, title].filter(Boolean).join(' ');
-    const res = await request(`/sc/search?q=${encodeURIComponent(q)}&count=12`, { timeout: 30000 });
+    const res = await request(`/sc/search?q=${encodeURIComponent(q)}&count=12`, { timeout: API_TIMEOUT.default });
     return res.tracks || [];
   } catch (e) { return []; }
 }
@@ -2988,7 +3022,7 @@ async function performSearch(query) {
     } else if (isPlaylists) {
       await searchPlaylistsUnified(query, gen);
     } else if (isZvuk) {
-      const data = await request(`/zvuk/search?q=${encodeURIComponent(query)}&count=18`, { timeout: 60000 });
+      const data = await request(`/zvuk/search?q=${encodeURIComponent(query)}&count=18`, { timeout: API_TIMEOUT.search });
       if (searchStale(gen, source)) return;
       const tracks = (data.tracks || []).map((t) => ({ ...t, source: 'zvuk', zvukId: t.id }));
       state.searchResults = tracks;
@@ -3000,7 +3034,7 @@ async function performSearch(query) {
         gsap.fromTo('#searchResults .track-row', { opacity: 0, y: 14, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.3, ease: 'power2.out', stagger: 0.03, clearProps: 'transform' });
       }
     } else if (isSc) {
-      const data = await request(`/sc/search?q=${encodeURIComponent(query)}&count=18`, { timeout: 60000 });
+      const data = await request(`/sc/search?q=${encodeURIComponent(query)}&count=18`, { timeout: API_TIMEOUT.search });
       if (searchStale(gen, source)) return;
       const tracks = (data.tracks || []).map((t) => ({ ...t, source: 'soundcloud', scId: t.id, scUrl: t.url }));
       state.searchResults = tracks;
@@ -3012,7 +3046,7 @@ async function performSearch(query) {
         gsap.fromTo('#searchResults .track-row', { opacity: 0, y: 14, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.3, ease: 'power2.out', stagger: 0.03, clearProps: 'transform' });
       }
     } else {
-      const data = await request(`/sc/search?q=${encodeURIComponent(query)}&count=18`, { timeout: 60000 });
+      const data = await request(`/sc/search?q=${encodeURIComponent(query)}&count=18`, { timeout: API_TIMEOUT.search });
       if (searchStale(gen, source)) return;
       const tracks = (data.tracks || []).map((t) => ({ ...t, source: 'soundcloud', scId: t.id, scUrl: t.url }));
       state.searchResults = tracks;
@@ -3046,8 +3080,8 @@ async function searchAlbumsUnified(query, gen) {
   try {
     // Настоящие альбомы — Deezer; подборки SoundCloud — дополнением.
     const [dzRes, scRes] = await Promise.allSettled([
-      request(`/music/albums?q=${encodeURIComponent(query)}&limit=24`, { timeout: 20000 }),
-      request(`/sc/search?q=${encodeURIComponent(query)}&count=15`, { timeout: 40000 }),
+      request(`/music/albums?q=${encodeURIComponent(query)}&limit=24`, { timeout: API_TIMEOUT.albums }),
+      request(`/sc/search?q=${encodeURIComponent(query)}&count=15`, { timeout: API_TIMEOUT.searchLong }),
     ]);
     const albums = [];
     const seen = new Set();
@@ -3138,8 +3172,8 @@ async function searchPlaylistsUnified(query, gen) {
   el.innerHTML = '<div class="empty-search" style="padding:30px"><p>Поиск плейлистов…</p></div>';
   try {
     const [ytRes, scRes] = await Promise.allSettled([
-      request(`/youtube/search?q=${encodeURIComponent(query)}&count=10&type=playlist`, { timeout: 30000 }),
-      request(`/sc/search?q=${encodeURIComponent(query)}&count=10`, { timeout: 60000 }),
+      request(`/youtube/search?q=${encodeURIComponent(query)}&count=10&type=playlist`, { timeout: API_TIMEOUT.default }),
+      request(`/sc/search?q=${encodeURIComponent(query)}&count=10`, { timeout: API_TIMEOUT.search }),
     ]);
     const playlists = [];
     if (ytRes.status === 'fulfilled' && ytRes.value.playlists) {
@@ -3232,10 +3266,10 @@ async function importYouTubePlaylist(url) {
     let data;
     if (isScSet) {
       const setName = decodeURIComponent((url.split('/sets/')[1] || '').split('?')[0]).replace(/[-_]/g, ' ');
-      const scData = await request(`/sc/search?q=${encodeURIComponent(setName)}&count=20`, { timeout: 30000 });
+      const scData = await request(`/sc/search?q=${encodeURIComponent(setName)}&count=20`, { timeout: API_TIMEOUT.default });
       data = { title: setName || 'SoundCloud Set', tracks: (scData.tracks || []).slice(0, 20) };
     } else {
-      data = await request(`/youtube/playlist?url=${encodeURIComponent(url)}&count=100`, { timeout: 60000 });
+      data = await request(`/youtube/playlist?url=${encodeURIComponent(url)}&count=100`, { timeout: API_TIMEOUT.search });
     }
     const tracks = (data.tracks || []).map((t) => ({ ...t, source: isScSet ? 'soundcloud' : 'youtube', scId: t.id, scUrl: t.url, album: isScSet ? 'SoundCloud' : 'Umbrella Search' }));
     if (!tracks.length) {
@@ -3260,7 +3294,7 @@ async function importYouTubePlaylist(url) {
 
 async function refreshScDownloaded() {
   try {
-    const data = await request('/sc/library', { timeout: 15000 });
+    const data = await request('/sc/library', { timeout: API_TIMEOUT.library });
     const map = {};
     (data.files || []).forEach((f) => { if (f.name) map[f.name.trim().toLowerCase()] = f.path; });
     state.scDownloaded = map;
@@ -3308,7 +3342,7 @@ async function waitSoundcloudJob(jobId, track) {
     const tick = async () => {
       let s = null;
       try {
-        s = await request(`/sc/status?id=${encodeURIComponent(jobId)}`, { timeout: 10000 });
+        s = await request(`/sc/status?id=${encodeURIComponent(jobId)}`, { timeout: API_TIMEOUT.update });
       } catch (e) { /* keep polling */ }
       if (s) {
         if (s.state === 'done') {
@@ -3365,7 +3399,7 @@ async function openScUrl() {
   let title = '';
   let duration = 0;
   try {
-    const res = await request(`/sc/resolve?url=${encodeURIComponent(url)}`, { timeout: 30000 });
+    const res = await request(`/sc/resolve?url=${encodeURIComponent(url)}`, { timeout: API_TIMEOUT.default });
     if (res && res.title) title = res.title;
     if (res && res.duration) duration = res.duration;
   } catch (e) { /* воспроизводим через /api/sc/stream даже без resolve */ }
@@ -3458,7 +3492,7 @@ async function showAlbumDetail(albumId) {
   detail.innerHTML = detailLoadingMarkup();
   cleanArtistScene();
   try {
-    const data = await request(`/music/album-tracks?id=${albumId}`, { timeout: 15000 });
+    const data = await request(`/music/album-tracks?id=${albumId}`, { timeout: API_TIMEOUT.library });
     const tracks = data.tracks || [];
     const artistQS = [];
     if (data.albumArtist) artistQS.push('name=' + encodeURIComponent(data.albumArtist));
@@ -3531,7 +3565,7 @@ async function showUnifiedAlbumDetail(source, id) {
     if (source === 'youtube') {
       const playlistUrl = al?.playlistUrl || '';
       if (!playlistUrl) throw new Error('Плейлист URL не найден');
-      const data = await request(`/youtube/playlist?url=${encodeURIComponent(playlistUrl)}&count=50`, { timeout: 30000 });
+      const data = await request(`/youtube/playlist?url=${encodeURIComponent(playlistUrl)}&count=50`, { timeout: API_TIMEOUT.default });
       tracks = (data.tracks || []).map((t) => ({
         ...t,
         source: 'youtube',
@@ -3621,7 +3655,7 @@ async function openUnifiedPlaylist(source, id) {
     if (source === 'youtube') {
       const url = pl?.url || '';
       if (!url) throw new Error('Нет URL плейлиста');
-      const data = await request(`/youtube/playlist?url=${encodeURIComponent(url)}&count=50`, { timeout: 30000 });
+      const data = await request(`/youtube/playlist?url=${encodeURIComponent(url)}&count=50`, { timeout: API_TIMEOUT.default });
       tracks = (data.tracks || []).map((t) => ({ ...t, source: 'youtube', videoId: t.videoId }));
       playlistTitle = data.title || pl?.title || 'Плейлист';
       playlistOwner = pl?.owner || '';
@@ -3717,7 +3751,7 @@ async function loadArtistBio(artist) {
   const factsEl = $('#artistFacts');
   if (!text || !artist) { if (text) text.textContent = ''; return; }
   try {
-    const data = await request(`/artist/bio?name=${encodeURIComponent(artist)}`, { timeout: 20000 });
+    const data = await request(`/artist/bio?name=${encodeURIComponent(artist)}`, { timeout: API_TIMEOUT.albums });
     if (data && data.ok && (data.extract || data.description)) {
       if (nameEl && data.title) nameEl.textContent = data.title;
       if (descEl && data.description) { descEl.textContent = data.description; descEl.hidden = false; }
@@ -3910,7 +3944,7 @@ function animateAlbumDetail() {
 async function playAlbumTrack(track, artistName, albumTracks, idx) {
   toast(`Поиск: ${artistName} — ${track.title}…`);
   try {
-    const data = await request(`/sc/search?q=${encodeURIComponent(artistName + ' ' + track.title)}&count=1`, { timeout: 30000 });
+    const data = await request(`/sc/search?q=${encodeURIComponent(artistName + ' ' + track.title)}&count=1`, { timeout: API_TIMEOUT.default });
     const found = (data.tracks || [])[0];
     if (!found) { toast('Трек не найден в Umbrella Search', 'error'); return; }
     const t = { title: found.title, artist: found.artist, scUrl: found.url, scId: found.id, source: 'soundcloud', thumbnail: found.thumbnail, duration: found.duration || track.duration, album: 'Deezer Альбом', color: '', _keepAlbumOpen: true, _albumRowIndex: idx };
@@ -3957,7 +3991,7 @@ async function playAlbumQueue(deezerTracks, artistName) {
   for (let i = 0; i < deezerTracks.length; i++) {
     const dt = deezerTracks[i];
     try {
-      const data = await request(`/sc/search?q=${encodeURIComponent(artistName + ' ' + dt.title)}&count=1`, { timeout: 30000 });
+      const data = await request(`/sc/search?q=${encodeURIComponent(artistName + ' ' + dt.title)}&count=1`, { timeout: API_TIMEOUT.default });
       const found = (data.tracks || [])[0];
       if (found) scTracks.push({ title: found.title, artist: found.artist, scUrl: found.url, scId: found.id, source: 'soundcloud', thumbnail: found.thumbnail, duration: found.duration || dt.duration, album: 'Deezer Альбом', color: '', _keepAlbumOpen: true, _albumRowIndex: i });
     } catch (e) { /* skip */ }
@@ -7062,7 +7096,7 @@ function wireEvents() {
   $('#btnShutdown')?.addEventListener('click', async () => {
     toast('Сервер останавливается…');
     try {
-      await request('/shutdown', { method: 'POST', timeout: 5000 });
+      await request('/shutdown', { method: 'POST', timeout: API_TIMEOUT.shutdown });
     } catch (e) { /* server stops anyway */ }
     setTimeout(() => {
       document.body.innerHTML = '<div style="display:grid;place-items:center;height:100vh;color:#f5f5f7;font-family:Inter,system-ui,sans-serif;background:#08080c"><div style="text-align:center"><h1 style="font-size:28px;margin-bottom:12px">Сервер остановлен</h1><p style="color:#858890;font-size:14px">Можно закрыть окно</p></div></div>';
@@ -7199,7 +7233,7 @@ function init() {
 
 async function refreshAppVersion() {
   try {
-    const info = await request('/version', { timeout: 8000 });
+    const info = await request('/version', { timeout: API_TIMEOUT.version });
     if (info && info.version) {
       const el = $('#appVersion');
       if (el) el.textContent = String(info.version).replace(/^v/, '');
@@ -7210,7 +7244,7 @@ async function refreshAppVersion() {
 async function checkForApplicationUpdate() {
   try {
     await refreshAppVersion();
-    const update = await request('/update', { timeout: 10000 });
+    const update = await request('/update', { timeout: API_TIMEOUT.update });
     if (!update || update.version === undefined || update.available === false) return;
     const banner = $('#updateBanner');
     if (!banner) return;

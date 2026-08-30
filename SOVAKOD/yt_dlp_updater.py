@@ -38,6 +38,22 @@ def _write_state(path: Path, state: dict) -> None:
 
 
 def _latest_version() -> str | None:
+    # Prefer JSON API (stable) over parsing human-readable pip output
+    try:
+        import urllib.request, json as _json
+        pypi_base = __import__("os").getenv("PYPI_BASE", "https://pypi.org")
+        req = urllib.request.Request(
+            f"{pypi_base}/pypi/{PACKAGE}/json",
+            headers={"User-Agent": "UmbrellaPlayer/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+            ver = str(data.get("info", {}).get("version", "")).strip()
+            if ver:
+                return ver
+    except Exception:
+        pass
+    # Fallback: pip index versions (fragile, keep for offline mirrors)
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pip", "index", "versions", PACKAGE,
@@ -62,10 +78,24 @@ def _latest_version() -> str | None:
     return None
 
 
+def _is_stale_lock(path: Path, max_age: float = 600) -> bool:
+    try:
+        return (time.time() - path.stat().st_mtime) > max_age
+    except OSError:
+        return False
+
+
 def _acquire_lock(path: Path) -> int | None:
     try:
         return os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
+        # Remove stale lock left by killed process
+        if _is_stale_lock(path):
+            try:
+                path.unlink()
+                return os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except OSError:
+                return None
         return None
     except OSError:
         return None
@@ -123,7 +153,12 @@ def check_and_update(root: str | Path, storage: str | Path, logger: logging.Logg
             _write_state(state_path, state)
             return current
         try:
-            is_old = tuple(int(part) for part in current.split(".")[:3]) < tuple(int(part) for part in latest.split(".")[:3])
+            # Compare up to 4 numeric parts, ignore suffix like .1
+            def _key(v: str) -> tuple[int, ...]:
+                return tuple(int(p) for p in re.split(r"[.\-]", v)[:4] if p.isdigit())
+            is_old = _key(current) < _key(latest)
+            if _key(current) == _key(latest):
+                is_old = current != latest
         except ValueError:
             is_old = current != latest
         if is_old:
