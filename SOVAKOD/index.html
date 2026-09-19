@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#08080c" />
   <title>Umbrella Player</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -11,12 +11,13 @@
   <link rel="stylesheet" href="styles.css?v=8" />
 </head>
 <body>
+  <a class="skip-link" href="#content">Перейти к содержимому</a>
 
   <div class="ambient" id="ambient"></div>
   <div class="mobile-topbar">
-    <button id="mobileMenu" aria-label="Меню"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
-    <b style="font:800 14px var(--font-display)">Umbrella</b>
-    <button id="mobileMenuClose" aria-label="Закрыть" style="opacity:0;pointer-events:none;width:36px"></button>
+    <button id="mobileMenu" aria-label="Меню"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+    <b style="font:800 14px var(--font-display)" translate="no">Umbrella</b>
+    <button id="mobileMenuClose" aria-label="Закрыть" tabindex="-1" style="opacity:0;pointer-events:none;width:36px"></button>
   </div>
 
   <div class="app" id="app">
@@ -27,47 +28,47 @@
 
     <!-- ===================== SIDEBAR ===================== -->
     <aside class="sidebar" id="sidebar">
-      <div class="brand" role="button" tabindex="0" aria-label="Umbrella Player — на главную">
+      <button class="brand" type="button" aria-label="Umbrella Player — на главную">
         <span class="brand-mark">
-          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M20.4 14.2A8.5 8.5 0 0 1 9.8 3.6a8.5 8.5 0 1 0 10.6 10.6z" />
           </svg>
         </span>
-        <span class="brand-text"><b>Umbrella</b><small>Player</small></span>
-      </div>
+        <span class="brand-text"><b translate="no">Umbrella</b><small>Player</small></span>
+      </button>
 
       <nav class="nav" aria-label="Основная навигация">
         <button class="nav-link active" data-view="library">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
           <span>Библиотека</span>
         </button>
         <button class="nav-link" data-view="search">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
           <span>Поиск</span>
         </button>
         <button class="nav-link" data-view="favorites">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.7-9.4-9.3C1.2 8 2.9 4.7 6 4.2c1.9-.3 3.7.6 4.6 2.1L12 8.3l1.4-2c.9-1.5 2.7-2.4 4.6-2.1 3.1.5 4.8 3.8 3.4 7-1.9 4.6-9.4 9.3-9.4 9.3z"/></svg>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20.5s-7.5-4.7-9.4-9.3C1.2 8 2.9 4.7 6 4.2c1.9-.3 3.7.6 4.6 2.1L12 8.3l1.4-2c.9-1.5 2.7-2.4 4.6-2.1 3.1.5 4.8 3.8 3.4 7-1.9 4.6-9.4 9.3-9.4 9.3z"/></svg>
           <span>Избранное</span>
         </button>
         <button class="nav-link" data-view="playlists">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h11"/><path d="M4 12h11"/><path d="M4 18h7"/><path d="M17 17.5V9l4 1.6"/><circle cx="15.6" cy="18" r="1.9"/></svg>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h11"/><path d="M4 12h11"/><path d="M4 18h7"/><path d="M17 17.5V9l4 1.6"/><circle cx="15.6" cy="18" r="1.9"/></svg>
           <span>Плейлисты</span>
         </button>
         <button class="nav-link" data-view="radio">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/><circle cx="12" cy="12" r="2"/></svg>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/><circle cx="12" cy="12" r="2"/></svg>
           <span>Радио</span>
         </button>
         <button class="nav-link" data-view="settings">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           <span>Настройки</span>
         </button>
 
         <button class="nav-link" data-view="stats">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15v4"/><path d="M12 9v10"/><path d="M17 5v14"/></svg>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15v4"/><path d="M12 9v10"/><path d="M17 5v14"/></svg>
           <span>Статистика</span>
         </button>
         <button class="nav-link" data-view="archaeo">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2-2.5 2.5L12 7l2.5-2.5z"/><path d="m5 9 3 3-3 3"/><path d="m19 9-3 3 3 3"/><path d="m8 5 8 16-4.5 1.5z"/></svg>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2-2.5 2.5L12 7l2.5-2.5z"/><path d="m5 9 3 3-3 3"/><path d="m19 9-3 3 3 3"/><path d="m8 5 8 16-4.5 1.5z"/></svg>
           <span>Археология</span>
         </button>
       </nav>
@@ -76,17 +77,17 @@
         <button class="profile-pill" id="profileButton" hidden>
           <img id="miniAvatar" alt="" />
           <span id="miniName"></span>
-          <svg class="pill-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          <svg class="pill-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="sidebar-utils">
           <button class="util-btn" id="utilLight" type="button" aria-label="Светлее" title="Ярче интерфейс">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.9 4.9 1.4 1.4"/><path d="m17.7 17.7 1.4 1.4"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m4.9 19.1 1.4-1.4"/><path d="m17.7 6.3 1.4-1.4"/></svg>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.9 4.9 1.4 1.4"/><path d="m17.7 17.7 1.4 1.4"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m4.9 19.1 1.4-1.4"/><path d="m17.7 6.3 1.4-1.4"/></svg>
           </button>
           <button class="util-btn active" id="utilDark" type="button" aria-label="Темнее" title="Тише интерфейс">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.4 14.2A8.5 8.5 0 0 1 9.8 3.6a8.5 8.5 0 1 0 10.6 10.6z"/></svg>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.4 14.2A8.5 8.5 0 0 1 9.8 3.6a8.5 8.5 0 1 0 10.6 10.6z"/></svg>
           </button>
           <button class="util-btn" id="utilExit" type="button" aria-label="Остановить сервер" title="Остановить сервер">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
           </button>
         </div>
         <div class="version-chip">v<span id="appVersion">1.0.5</span></div>
@@ -103,23 +104,23 @@
         </div>
         <div class="launch-inner">
           <div class="launch-logo">
-            <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M12 2a10 10 0 1 0 10 10" />
               <path d="M12 2v10l7 4" />
             </svg>
           </div>
           <div class="eyebrow"><span></span> Ваша музыка — без ограничений</div>
-          <h1>Umbrella Player.<br /><em>Музыка для всех.</em></h1>
-          <p class="lead">Импортируйте свои файлы, ищите треки в Umbrella Search, собирайте избранное и наслаждайтесь любимыми исполнителями в одном месте.</p>
+          <p class="launch-title">Umbrella Player.<br /><em>Музыка для всех.</em></p>
+          <p class="lead">Импортируйте свои файлы, ищите треки в SoundCloud, собирайте избранное и наслаждайтесь любимыми исполнителями в одном месте.</p>
           <div class="launch-features">
-            <span><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10l7 4"/><path d="M12 2a10 10 0 1 0 10 10"/></svg>Локальная библиотека</span>
-            <span><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Umbrella Search</span>
-            <span><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Синхронные тексты</span>
-            <span><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/><circle cx="12" cy="12" r="2"/></svg>Радио и плейлисты</span>
+            <span><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v10l7 4"/><path d="M12 2a10 10 0 1 0 10 10"/></svg>Локальная библиотека</span>
+            <span><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>SoundCloud</span>
+            <span><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Синхронные тексты</span>
+            <span><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/><circle cx="12" cy="12" r="2"/></svg>Радио и плейлисты</span>
           </div>
           <button class="btn btn-primary launch-btn" type="button" id="launchLocal">
             <span>Открыть плеер</span>
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
           </button>
           <div class="launch-hint">Локальный плеер · все данные хранятся на вашем устройстве</div>
         </div>
@@ -134,31 +135,31 @@
           </div>
           <div class="dash-actions">
             <button class="btn btn-primary" id="dashAddTrack">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
               <span>Добавить трек</span>
             </button>
             <input id="trackFileInput" type="file" accept="audio/*" tabindex="-1" hidden />
             <button class="icon-btn" id="viewToggle" type="button" aria-label="Сменить вид" title="Компактный / широкий вид">
-              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>
             </button>
           </div>
         </header>
 
         <section class="stats" id="stats">
           <article>
-            <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
+            <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
             <span class="stat-body"><strong id="statTracks">0</strong><label id="statTracksLabel">Треков в коллекции</label></span>
           </article>
           <article>
-            <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg></span>
+            <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg></span>
             <span class="stat-body"><strong id="statArtists">0</strong><label id="statArtistsLabel">Исполнителей</label></span>
           </article>
           <article>
-            <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 6.5V12l3.5 2"/></svg></span>
+            <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 6.5V12l3.5 2"/></svg></span>
             <span class="stat-body"><strong id="statDuration">0 мин</strong><label>Время звучания</label></span>
           </article>
           <article>
-            <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.7-9.4-9.3C1.2 8 2.9 4.7 6 4.2c1.9-.3 3.7.6 4.6 2.1L12 8.3l1.4-2c.9-1.5 2.7-2.4 4.6-2.1 3.1.5 4.8 3.8 3.4 7-1.9 4.6-9.4 9.3-9.4 9.3z"/></svg></span>
+            <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20.5s-7.5-4.7-9.4-9.3C1.2 8 2.9 4.7 6 4.2c1.9-.3 3.7.6 4.6 2.1L12 8.3l1.4-2c.9-1.5 2.7-2.4 4.6-2.1 3.1.5 4.8 3.8 3.4 7-1.9 4.6-9.4 9.3-9.4 9.3z"/></svg></span>
             <span class="stat-body"><strong id="statFavorites">0</strong><label>В избранном</label></span>
           </article>
         </section>
@@ -180,7 +181,7 @@
             </svg>
             <div class="banner-main">
               <div class="banner-ico" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/><circle cx="12" cy="12" r="2"/></svg>
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/><circle cx="12" cy="12" r="2"/></svg>
               </div>
               <div class="banner-text">
                 <h3>Радио</h3>
@@ -188,11 +189,11 @@
               </div>
             </div>
             <div class="radio-search" id="radioSearchWrap" hidden>
-              <input id="radioArtistInput" placeholder="Например: Руки Вверх" autocomplete="off" />
+              <input id="radioArtistInput" placeholder="Например: Руки Вверх…" autocomplete="off" aria-label="Исполнитель для радио" />
               <button class="btn btn-primary btn-sm" id="radioStartBtn" type="button">Включить</button>
             </div>
             <button class="banner-play" id="radioToggleBtn" type="button" aria-label="Включить радио" title="Включить радио">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><polygon points="8,5 19,12 8,19"/></svg>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><polygon points="8,5 19,12 8,19"/></svg>
             </button>
           </div>
 
@@ -212,7 +213,7 @@
             </svg>
             <div class="banner-main">
               <div class="banner-ico violet" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.178 8c5.096 0 5.096 8 0 8-5.095 0-7.133-8-12.739-8-4.585 0-4.585 8 0 8 5.606 0 7.644-8 12.74-8z"/></svg>
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.178 8c5.096 0 5.096 8 0 8-5.095 0-7.133-8-12.739-8-4.585 0-4.585 8 0 8 5.606 0 7.644-8 12.74-8z"/></svg>
               </div>
               <div class="banner-text">
                 <h3>Jukebox forever</h3>
@@ -220,7 +221,7 @@
               </div>
             </div>
             <button class="banner-play banner-arrow" type="button" aria-label="Открыть Jukebox forever">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><polygon points="8,5 19,12 8,19"/></svg>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><polygon points="8,5 19,12 8,19"/></svg>
             </button>
           </div>
         </div>
@@ -260,18 +261,15 @@
               <div class="section-title tracks-title"><h2>Треки</h2></div>
               <div class="track-tools">
                 <div class="field filter-field">
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-                  <input id="filterInput" placeholder="Поиск треков…" autocomplete="off" />
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                  <input id="filterInput" placeholder="Поиск треков…" autocomplete="off" aria-label="Фильтр треков" />
                 </div>
                 <button class="sort-button" id="sortButton" type="button">
                   <span id="sortLabel">По дате</span>
-                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
               </div>
               <div class="track-list compact" id="trackList"></div>
-
-              <div class="section-title yt-title" id="ytSection" hidden><h2>Umbrella музыка</h2></div>
-              <div class="track-list compact" id="ytTrackList"></div>
             </div>
 
           </div>
@@ -302,12 +300,12 @@
               <path d="M0 90C46 90 52 46 96 46s52 44 96 44 52-44 96-44 46 22 92 22" fill="none" stroke="url(#bwR)" stroke-width="1"/>
             </svg>
             <div class="radio-hero-ico" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/><circle cx="12" cy="12" r="2"/></svg>
+              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/><circle cx="12" cy="12" r="2"/></svg>
             </div>
             <h2>Радио по исполнителю</h2>
             <p>Введите имя — Umbrella соберёт бесконечный поток похожих треков.</p>
             <div class="radio-hero-form">
-              <input id="radioViewInput" placeholder="Например: PHARAOH" autocomplete="off" />
+              <input id="radioViewInput" placeholder="Например: PHARAOH…" autocomplete="off" aria-label="Исполнитель для радио" />
               <button class="btn btn-primary" id="radioViewStart" type="button">Включить радио</button>
             </div>
             <div class="radio-suggest" id="radioSuggest"></div>
@@ -326,29 +324,29 @@
         <!-- ── Search view ── -->
         <section class="content-section search-panel" id="searchContent" hidden>
           <div class="search-tabs" role="tablist">
-            <button class="search-tab active" data-source="soundcloud" role="tab" title="Стриминг через Umbrella — на базе SoundCloud">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v2"/><path d="M7 13v4"/><path d="M10 11v6"/><path d="M13 9v8"/><path d="M16 10v7"/><path d="M18 12c1.5 0 2.8 1.3 2.8 2.9 0 1.6-1.3 2.9-2.8 2.9H6"/></svg>
-              Umbrella Search
+            <button class="search-tab active" data-source="soundcloud" role="tab" title="Стриминг SoundCloud">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15v2"/><path d="M7 13v4"/><path d="M10 11v6"/><path d="M13 9v8"/><path d="M16 10v7"/><path d="M18 12c1.5 0 2.8 1.3 2.8 2.9 0 1.6-1.3 2.9-2.8 2.9H6"/></svg>
+              SoundCloud
             </button>
             <button class="search-tab" data-source="zvuk" role="tab" title="Звук — 128kbps без подписки, FLAC с подпиской">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
               Zvuk
             </button>
             <button class="search-tab" data-source="albums" role="tab">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15V6"/><path d="M18.5 18a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/><path d="M12 12H3"/><path d="M16 6H3"/><path d="M12 18H3"/></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15V6"/><path d="M18.5 18a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/><path d="M12 12H3"/><path d="M16 6H3"/><path d="M12 18H3"/></svg>
               Альбомы
             </button>
           </div>
           <div class="search-box">
-            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-            <input id="searchInput" placeholder="Трек, исполнитель или альбом" autocomplete="off" />
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <input id="searchInput" type="search" name="q" placeholder="Трек, исполнитель или альбом…" autocomplete="off" aria-label="Поиск музыки" />
             <button class="btn btn-primary" id="searchButton">
               <span>Найти</span>
             </button>
           </div>
           <div class="source-toolbar" id="scToolbar" hidden>
             <div class="source-url-row">
-              <input id="scUrlInput" placeholder="Ссылка soundcloud.com/…" autocomplete="off" />
+              <input id="scUrlInput" placeholder="Ссылка soundcloud.com/…" autocomplete="off" aria-label="Ссылка на SoundCloud" />
               <button class="btn btn-ghost btn-sm" id="scUrlGo">Открыть</button>
             </div>
             <div class="source-toolbar-right">
@@ -358,7 +356,7 @@
           <div class="source-library" id="scLibrary" hidden></div>
           <div class="empty-search" id="searchEmpty">
             <div class="empty-illu" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="52" height="52" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/><path d="M8 11h6"/><path d="M11 8v6"/></svg>
+              <svg viewBox="0 0 24 24" width="52" height="52" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/><path d="M8 11h6"/><path d="M11 8v6"/></svg>
             </div>
             <h2>Найдите музыку</h2>
             <p>Введите название трека или исполнителя. Результаты можно добавить в библиотеку одним нажатием.</p>
@@ -371,7 +369,7 @@
           <div class="playlist-banner" id="playlistBanner" hidden>
             <div class="playlist-banner-info">
               <span class="playlist-banner-icon">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
               </span>
               <div><b id="playlistBannerTitle">Плейлист</b><small id="playlistBannerCount"></small></div>
             </div>
@@ -405,6 +403,10 @@
               <div class="setting-row">
                 <div><b>Атмосферный фон</b><p>Живой переливающийся фон приложения</p></div>
                 <button class="toggle on" id="setAmbient" aria-label="Атмосферный фон" role="switch" aria-checked="true"></button>
+              </div>
+              <div class="setting-row">
+                <div><b>Лёгкие эффекты</b><p>Выключает блюр и живой фон для слабых GPU</p></div>
+                <button class="toggle" id="setLowFx" aria-label="Лёгкие эффекты" role="switch" aria-checked="false"></button>
               </div>
               <div class="setting-row">
                 <div><b>Сохранение громкости</b><p>Запоминать уровень громкости между запусками</p></div>
@@ -443,11 +445,11 @@
 
             <div class="settings-actions">
               <button class="btn btn-danger" id="btnClearCache">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                 Очистить кэш и библиотеку
               </button>
               <button class="btn btn-danger" id="btnShutdown">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64A9 9 0 1 1 5.64 6.64"/><path d="M12 2v10"/></svg>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64A9 9 0 1 1 5.64 6.64"/><path d="M12 2v10"/></svg>
                 Остановить сервер
               </button>
             </div>
@@ -463,13 +465,13 @@
               <button class="chip" data-period="7">7 дней</button>
             </div>
             <button class="btn btn-ghost btn-sm" id="statClearBtn">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
               <span>Очистить статистику</span>
             </button>
           </div>
 
           <div class="stats-empty" id="statsEmpty" hidden>
-            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
             <h3>Пока нет данных</h3>
             <p>Включите музыку — сюда будут собираться прослушивания, топы и тепловая карта.</p>
           </div>
@@ -477,19 +479,19 @@
           <div id="statsDashboard" hidden>
             <section class="stats" id="listenStats">
               <article>
-                <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15v4"/><path d="M12 9v10"/><path d="M17 5v14"/></svg></span>
+                <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15v4"/><path d="M12 9v10"/><path d="M17 5v14"/></svg></span>
                 <span class="stat-body"><strong id="lstatPlays">0</strong><label>Прослушиваний</label></span>
               </article>
               <article>
-                <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
-                <span class="stat-body"><strong id="lstatTime">0 мин</strong><label>Время звучания</label></span>
+                <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
+                <span class="stat-body"><strong id="lstatTime">0 мин</strong><label>Прослушано</label></span>
               </article>
               <article>
-                <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></svg></span>
+                <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></svg></span>
                 <span class="stat-body"><strong id="lstatArtists">0</strong><label>Исполнителей</label></span>
               </article>
               <article>
-                <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
+                <span class="stat-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
                 <span class="stat-body"><strong id="lstatTracks">0</strong><label>Треков</label></span>
               </article>
             </section>
@@ -541,7 +543,7 @@
               <button class="chip active" data-scope="30">Глубоко</button>
             </div>
             <button class="btn btn-ghost btn-sm" id="archaeoDigBtn">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 21 18-18"/><path d="M15 3h6v6"/></svg>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 21 18-18"/><path d="M15 3h6v6"/></svg>
               <span id="archaeoDigLabel">Копать</span>
             </button>
           </div>
@@ -559,7 +561,7 @@
           </div>
 
           <div class="archaeo-empty" id="archaeoEmpty" hidden>
-            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2-2.5 2.5L12 7l2.5-2.5z"/><path d="m5 9 3 3-3 3"/><path d="m19 9-3 3 3 3"/><path d="m8 5 8 16-4.5 1.5z"/></svg>
+            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2-2.5 2.5L12 7l2.5-2.5z"/><path d="m5 9 3 3-3 3"/><path d="m19 9-3 3 3 3"/><path d="m8 5 8 16-4.5 1.5z"/></svg>
             <h3>Здесь ещё ничего не раскопано</h3>
             <p id="archaeoEmptyText">Нажмите «Копать», чтобы изучить связи между артистами и найти скрытые находки.</p>
           </div>
@@ -602,26 +604,26 @@
         <small id="playerArtist"></small>
       </div>
       <button class="pb-fav" id="pbFav" aria-label="В избранное" title="В избранное">
-        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.7-9.4-9.3C1.2 8 2.9 4.7 6 4.2c1.9-.3 3.7.6 4.6 2.1L12 8.3l1.4-2c.9-1.5 2.7-2.4 4.6-2.1 3.1.5 4.8 3.8 3.4 7-1.9 4.6-9.4 9.3-9.4 9.3z"/></svg>
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20.5s-7.5-4.7-9.4-9.3C1.2 8 2.9 4.7 6 4.2c1.9-.3 3.7.6 4.6 2.1L12 8.3l1.4-2c.9-1.5 2.7-2.4 4.6-2.1 3.1.5 4.8 3.8 3.4 7-1.9 4.6-9.4 9.3-9.4 9.3z"/></svg>
       </button>
     </div>
 
     <div class="pb-center">
       <div class="pb-controls">
         <button class="pb-btn pb-side" id="pbShuffle" aria-label="Перемешать" title="Перемешать">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
         </button>
         <button class="pb-btn" id="pbPrev" aria-label="Предыдущий" title="Предыдущий">
-          <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor"><path d="M6 4h2v16H6zM18.5 5.5 10 12l8.5 6.5z"/></svg>
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor" aria-hidden="true"><path d="M6 4h2v16H6zM18.5 5.5 10 12l8.5 6.5z"/></svg>
         </button>
         <button class="pb-btn pb-play" id="pbPlay" aria-label="Воспроизвести" title="Воспроизвести / пауза">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" id="pbPlayIcon"><polygon points="8,5 20,12 8,19"/></svg>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" id="pbPlayIcon" aria-hidden="true"><polygon points="8,5 20,12 8,19"/></svg>
         </button>
         <button class="pb-btn" id="pbNext" aria-label="Следующий" title="Следующий">
-          <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor"><path d="M16 4h2v16h-2zM5.5 5.5 14 12l-8.5 6.5z"/></svg>
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor" aria-hidden="true"><path d="M16 4h2v16h-2zM5.5 5.5 14 12l-8.5 6.5z"/></svg>
         </button>
         <button class="pb-btn pb-side" id="pbRepeat" aria-label="Повтор" title="Повтор">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
         </button>
       </div>
       <div class="pb-seek">
@@ -636,7 +638,7 @@
 
     <div class="pb-right">
       <button class="vol-icon" id="pbVolIcon" aria-label="Громкость" title="Громкость">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polygon points="11 5 6 9 2 9 2 15 6 15 11 19" fill="currentColor" opacity=".25" />
           <path class="vol-wave-1" d="M15.54 8.46a5 5 0 0 1 0 7.07" />
           <path class="vol-wave-2" d="M19.07 4.93a10 10 0 0 1 0 14.14" />
@@ -647,7 +649,7 @@
         <div class="vol-thumb"></div>
       </div>
       <button class="pb-eq" id="pbQueue" aria-label="Очередь и текст" title="Очередь и текст песни">
-        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="9" cy="7" r="2" fill="var(--bg-0)"/><circle cx="15" cy="12" r="2" fill="var(--bg-0)"/><circle cx="8" cy="17" r="2" fill="var(--bg-0)"/></svg>
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="9" cy="7" r="2" fill="var(--bg-0)"/><circle cx="15" cy="12" r="2" fill="var(--bg-0)"/><circle cx="8" cy="17" r="2" fill="var(--bg-0)"/></svg>
       </button>
       <button class="pb-lyrics" id="pbLyrics" aria-label="Текст песни" title="Текст песни">
         <span class="lyrics-glyph" aria-hidden="true">Т</span>
@@ -665,12 +667,12 @@
     </div>
 
     <button class="np-close" id="npClose" aria-label="Свернуть">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
     </button>
 
     <div class="np-stage">
       <div class="np-art-wrap" id="npArtWrap">
-        <video class="np-video" id="npVideo" src="sewerslvt.mp4" muted loop playsinline preload="none"></video>
+        <video class="np-video" id="npVideo" src="sewerslvt.mp4" muted loop playsinline preload="none" aria-hidden="true" disablepictureinpicture></video>
         <div class="np-art" id="npArt"></div>
         <div class="np-art-custom" id="npArtCustom" hidden></div>
         <div class="np-art-shine" aria-hidden="true"></div>
@@ -691,19 +693,19 @@
 
         <div class="np-controls">
           <button class="np-btn side" id="npShuffle" aria-label="Перемешать" title="Перемешать">
-            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
           </button>
           <button class="np-btn side" id="npPrev" aria-label="Назад" title="Предыдущий">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M6 4h2v16H6zM18.5 5.5 10 12l8.5 6.5z"/></svg>
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M6 4h2v16H6zM18.5 5.5 10 12l8.5 6.5z"/></svg>
           </button>
           <button class="np-btn np-play" id="npPlay" aria-label="Воспроизвести" title="Воспроизвести/пауза">
-            <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor" id="npPlayIcon"><polygon points="8,5 20,12 8,19"/></svg>
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor" id="npPlayIcon" aria-hidden="true"><polygon points="8,5 20,12 8,19"/></svg>
           </button>
           <button class="np-btn side" id="npNext" aria-label="Вперёд" title="Следующий">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M16 4h2v16h-2zM5.5 5.5 14 12l-8.5 6.5z"/></svg>
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M16 4h2v16h-2zM5.5 5.5 14 12l-8.5 6.5z"/></svg>
           </button>
           <button class="np-btn side" id="npRepeat" aria-label="Повтор" title="Повтор">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
           </button>
         </div>
 
@@ -712,20 +714,20 @@
             <span class="lyrics-glyph" aria-hidden="true">Т</span>
           </button>
           <button class="np-btn small" id="npAddLibrary" aria-label="Добавить в библиотеку" title="Добавить в библиотеку">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </button>
           <button class="np-btn small" id="npFull" aria-label="На весь экран" title="На весь экран">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
           </button>
           <button class="np-btn small speed" id="npSpeed" aria-label="Скорость" title="Скорость">1x</button>
           <button class="np-btn small" id="npRadio" aria-label="Радио" title="Радио">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/><circle cx="12" cy="12" r="2"/></svg>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/><circle cx="12" cy="12" r="2"/></svg>
           </button>
           <button class="np-btn small" id="npQueueToggle" aria-label="Очередь" title="Очередь">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
           </button>
           <button class="np-btn small" id="npCoverBtn" aria-label="Обложка" title="Сменить обложку">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
           </button>
           <input id="npCoverFile" type="file" accept="image/jpeg,image/png,image/gif,video/mp4,video/webm" hidden />
 
@@ -745,7 +747,7 @@
 
           <div class="np-volume" id="npVolumeWrap">
             <button class="vol-icon" id="volIcon" aria-label="Громкость">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19" fill="currentColor" opacity=".25" />
                 <path class="vol-wave-1" d="M15.54 8.46a5 5 0 0 1 0 7.07" />
                 <path class="vol-wave-2" d="M19.07 4.93a10 10 0 0 1 0 14.14" />
@@ -767,7 +769,7 @@
           <small id="npQueueCount">0 треков</small>
         </div>
         <button class="np-queue-close" id="npQueueClose" aria-label="Закрыть очередь" title="Закрыть">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
       <div class="np-queue-list" id="npQueueList"></div>
@@ -779,7 +781,7 @@
   <div class="lyrics-fs" id="lyricsOverlay" hidden>
     <div class="lyrics-fs-bg" id="lyricsBackdrop"></div>
     <button class="lyrics-fs-close" id="lyricsClose" aria-label="Закрыть">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
     <div class="lyrics-fs-head" id="lyricsHead"></div>
     <div class="lyrics-fs-body" id="lyricsBody"><p class="lyrics-empty">Текст загружается…</p></div>
@@ -804,30 +806,6 @@
     </div>
   </div>
 
-  <section class="yt-verify" id="ytVerify" hidden aria-labelledby="ytVerifyTitle">
-    <div class="yt-verify-backdrop"></div>
-    <div class="yt-verify-card" role="dialog" aria-modal="true">
-      <button class="yt-verify-close" id="ytVerifyClose" type="button" aria-label="Закрыть">×</button>
-      <div class="yt-verify-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="25" height="25" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8ZM9.6 15.6V8.4l6.2 3.6-6.2 3.6Z"/></svg>
-      </div>
-      <div class="yt-verify-copy">
-        <span class="yt-verify-kicker">Проверка соединения</span>
-        <h2 id="ytVerifyTitle">Сервис просит подтвердить, что вы не бот</h2>
-        <p>Откройте страницу трека, пройдите проверку, затем вернитесь сюда и повторите запуск.</p>
-        <div class="yt-verify-track"><b id="ytVerifyTrackTitle">—</b><small id="ytVerifyTrackArtist">—</small></div>
-      </div>
-      <div class="yt-verify-page" id="ytVerifyPage" hidden>
-        <iframe id="ytVerifyFrame" title="Страница для проверки" referrerpolicy="strict-origin-when-cross-origin"></iframe>
-      </div>
-      <div class="yt-verify-actions">
-        <button class="btn btn-ghost" id="ytVerifyOpen" type="button">Открыть страницу</button>
-        <button class="btn btn-primary" id="ytVerifyRetry" type="button">Повторить запуск</button>
-      </div>
-      <small class="yt-verify-note">Проверка может быть недоступна внутри встроенного окна. В этом случае используйте «Открыть страницу».</small>
-    </div>
-  </section>
-
   <!-- ===================== VINYL SHELF ===================== -->
   <section class="vinyl-mode" id="vinylOverlay" hidden aria-label="Виниловая полка">
     <div class="vm-bg" aria-hidden="true">
@@ -839,7 +817,7 @@
 
     <div class="vm-head">
       <button class="vm-close" id="vmClose" aria-label="Закрыть полку" title="Закрыть">
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
       <div class="vm-title">
         <b>DJ-пульт · виниловые вертушки</b>
@@ -847,12 +825,12 @@
       </div>
       <div class="vm-tools">
         <button class="vm-tool" id="vmAddShelf">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
           <span>Полка</span>
         </button>
         <label class="vm-fx-vol" title="Громкость винила">
           <span>FX</span>
-          <input id="vmFxVol" type="range" min="0" max="100" value="55" />
+          <input id="vmFxVol" type="range" min="0" max="100" value="55" aria-label="Громкость винила" />
         </label>
       </div>
     </div>
@@ -882,18 +860,18 @@
           </div>
           <div class="vs-deck-controls">
             <button class="vm-tool" id="vsPlay" aria-label="Играть/пауза" title="Играть/пауза">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" id="vsPlayIcon"><polygon points="8,5 20,12 8,19"/></svg>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" id="vsPlayIcon" aria-hidden="true"><polygon points="8,5 20,12 8,19"/></svg>
             </button>
             <button class="vm-tool" id="vsNeedleBtn" aria-label="Режим иглы" title="Режим иглы: звук и визуализация иглы">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 4 4 14"/><path d="M17 7l3-3-1.5-1.5L15 6z" transform="rotate(45 15 6)"/><path d="M4 20c4 0 4-4 8-4"/></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M14 4 4 14"/><path d="M17 7l3-3-1.5-1.5L15 6z" transform="rotate(45 15 6)"/><path d="M4 20c4 0 4-4 8-4"/></svg>
               <span>Игла</span>
             </button>
             <button class="vm-tool" id="vsCondBtn" aria-label="Состояние пластинки" title="Состояние пластинки">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v18"/><path d="M5 8c2-2 5-2 7 0s5 2 7 0"/><path d="M5 16c2-2 5-2 7 0s5 2 7 0"/></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3v18"/><path d="M5 8c2-2 5-2 7 0s5 2 7 0"/><path d="M5 16c2-2 5-2 7 0s5 2 7 0"/></svg>
               <span id="vsCondLabel">Потёртая</span>
             </button>
             <button class="vm-tool" id="vsBackBtn" aria-label="Вернуть на полку" title="Вернуть пластинку на полку">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 5 5v1"/></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 5 5v1"/></svg>
               <span>В полку</span>
             </button>
           </div>
@@ -906,12 +884,12 @@
         <div class="vs-mixer" id="vsMixer">
           <div class="vs-mixer-burst" id="vsMixBurst" aria-hidden="true"></div>
           <button class="vm-tool" id="vsSyncBtn" title="Бит-синк: подогнать B под A" aria-label="Синхронизировать">
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
             <span>SYNC</span>
           </button>
           <label class="vs-xfade" title="Кроссфейдер: A слева, B справа">
             <span>Фейдер</span>
-            <input id="vsXfade" type="range" min="-1" max="1" value="0" step="0.01" />
+            <input id="vsXfade" type="range" min="-1" max="1" value="0" step="0.01" aria-label="Кроссфейдер" />
           </label>
           <div class="vs-xfade-scale" aria-hidden="true"><span id="xfScaleA">A</span><span id="xfScaleB">B</span></div>
         </div>
@@ -938,14 +916,14 @@
           </div>
           <div class="vs-deck-controls">
             <button class="vm-tool" id="vsPlayB" aria-label="Играть/пауза B" title="Играть/пауза вертушки B">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" id="vsPlayIconB"><polygon points="8,5 20,12 8,19"/></svg>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" id="vsPlayIconB" aria-hidden="true"><polygon points="8,5 20,12 8,19"/></svg>
             </button>
             <button class="vm-tool" id="vsCueBtn" aria-label="Предпрослух" title="Зажать — предпрослух, отпустить — вернуться">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v16"/><path d="M18 4v16"/><path d="M8 4h8"/><path d="M8 20h8"/></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4v16"/><path d="M18 4v16"/><path d="M8 4h8"/><path d="M8 20h8"/></svg>
               <span>Cue</span>
             </button>
             <button class="vm-tool" id="vsBackBtnB" aria-label="Вернуть на полку" title="Вернуть пластинку B на полку">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 5 5v1"/></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 5 5v1"/></svg>
               <span>В полку</span>
             </button>
           </div>
@@ -960,9 +938,9 @@
 
   <!-- ===================== FULLSCREEN RECORD ===================== -->
   <section class="rec-mode" id="recOverlay" hidden aria-label="Пластинка на весь экран">
-    <div class="rec-close" id="recClose" role="button" tabindex="0" aria-label="Закрыть пластинку" title="Закрыть">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </div>
+    <button class="rec-close" id="recClose" type="button" aria-label="Закрыть пластинку" title="Закрыть">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
     <div class="rec-head">
       <b id="recTitle">—</b>
       <small id="recArtist">—</small>
@@ -988,7 +966,7 @@
     <div class="dj-tour-card">
       <button class="dj-tour-x" id="djTourSkip" aria-label="Пропустить" title="Пропустить">✕</button>
       <div class="dj-tour-head">
-        <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v6"/><path d="M12 15v6"/><path d="M3 12h6"/><path d="M15 12h6"/></svg>
+        <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v6"/><path d="M12 15v6"/><path d="M3 12h6"/><path d="M15 12h6"/></svg>
         <div>
           <b>Виртуальные вертушки</b>
           <small>своди треки как настоящий диджей</small>
@@ -1004,12 +982,11 @@
     </div>
   </div>
 
-  <script src="hls.min.js"></script>
-  <script src="gsap.min.js"></script>
+<script src="gsap.min.js"></script>
   <script src="spring-ui.js"></script>
   <script src="silk-aurora.js"></script>
   <script src="app2.js"></script>
-  <script src="archaeo.js"></script>
+  <script src="archaeo.js" defer></script>
   <script>
     document.getElementById('dashSearch')?.addEventListener('input', e=>{
       const a=document.getElementById('filterInput');

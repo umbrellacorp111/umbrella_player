@@ -15,7 +15,6 @@ dist/
 
 # Runtime data, browser profiles and downloaded media
 **/user_data/
-**/_yt_cache/
 **/_sc_cache/
 **/sc_music/
 *.part

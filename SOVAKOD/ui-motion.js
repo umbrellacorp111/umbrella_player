@@ -35,14 +35,26 @@
     if (reduced || !hasGsap) return;
     selectAll('.playlist-card:not([data-motion-ready])', root).forEach((card) => {
       card.dataset.motionReady = 'true';
-      card.addEventListener('pointermove', (event) => {
-        if (event.pointerType === 'touch') return;
+      let tiltRaf = 0;
+      let lastEvt = null;
+      const applyTilt = () => {
+        tiltRaf = 0;
+        const event = lastEvt;
+        lastEvt = null;
+        if (!event || !card.isConnected) return;
         const rect = card.getBoundingClientRect();
         const x = (event.clientX - rect.left) / rect.width - 0.5;
         const y = (event.clientY - rect.top) / rect.height - 0.5;
         gsap.to(card, { x: x * 4, y: y * 4, duration: 0.35, ease: 'power2.out', overwrite: 'auto' });
+      };
+      card.addEventListener('pointermove', (event) => {
+        if (event.pointerType === 'touch') return;
+        lastEvt = event;
+        if (!tiltRaf) tiltRaf = requestAnimationFrame(applyTilt);
       });
       card.addEventListener('pointerleave', () => {
+        lastEvt = null;
+        if (tiltRaf) { cancelAnimationFrame(tiltRaf); tiltRaf = 0; }
         gsap.to(card, { x: 0, y: 0, duration: 0.55, ease: 'elastic.out(1, .55)', overwrite: 'auto' });
       });
     });

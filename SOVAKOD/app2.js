@@ -69,14 +69,58 @@ const state = {
   scLibTracks: [],
 };
 
+function scKey(track) {
+  if (!track) return '';
+  return track.scUrl || track.url || track.scId || '';
+}
+
+let scUrlMap = loadJSON('umbrella_scmap', {});
+
+function isScDownloaded(track) {
+  if (!track) return false;
+  const k = scKey(track);
+  if (k && scUrlMap[k]) return true;
+  const ti = (track.title || '').trim().toLowerCase();
+  if (!ti) return false;
+  const ar = (track.artist || '').trim().toLowerCase();
+  return state.scLibTracks.some((f) =>
+    (f.title || '').trim().toLowerCase() === ti &&
+    (f.artist || '').trim().toLowerCase() === ar);
+}
+
 const audio = document.createElement('audio');
+// Без crossOrigin ресурс SoundCloud (чужой источник) считается tainted для
+// Web Audio: createMediaElementSource(audio) будет выдавать ТИШИНУ на выходе,
+// хотя сам <audio> визуально играет. CDN SoundCloud отдаёт CORS-заголовки на
+// потоках, так что anonymous снимает тишину, не требуя авторизации.
+audio.crossOrigin = 'anonymous';
 document.body.appendChild(audio);
 const audioB = document.createElement('audio');
+audioB.crossOrigin = 'anonymous';
 audioB.preload = 'auto';
 document.body.appendChild(audioB);
 let preferredVolume = Number(localStorage.getItem('umbrella_volume') || '1');
 if (!Number.isFinite(preferredVolume)) preferredVolume = 1;
 preferredVolume = Math.max(0, Math.min(1, preferredVolume));
+
+// Гарантированно резюмим AudioContext на первом же пользовательском жесте.
+// Визуализатор роутит звук ИСКЛЮЧИТЕЛЬНО через Web Audio (createMediaElementSource
+// отключает штатный вывод <audio>), а новый AudioContext стартует suspended —
+// если resume() не попадёт в окно активации жеста, трек "играет" визуально,
+// но звука не будет вообще. Ловим самый первый клик/тач в документе.
+function primeAudioContextOnce() {
+  try {
+    ensureAnalyser();
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume().catch((e) => console.warn('[Audio] initial resume failed', e));
+    }
+  } catch (e) {
+    console.warn('[Audio] priming failed', e);
+  }
+}
+['pointerdown', 'keydown'].forEach((evt) =>
+  document.addEventListener(evt, primeAudioContextOnce, { once: true, capture: true })
+);
 
 let playbackLoadingTimer = null;
 let playbackLoadingParticles = [];
@@ -165,9 +209,23 @@ function loadJSON(key, fallback) {
   catch (e) { return fallback; }
 }
 
-function saveJSON(key, value) {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* storage full */ }
+const idleWriteQueue = {};
+let idleFlushScheduled = false;
+function flushIdleWrites() {
+  idleFlushScheduled = false;
+  for (const k of Object.keys(idleWriteQueue)) {
+    try { localStorage.setItem(k, JSON.stringify(idleWriteQueue[k])); } catch (e) { /* storage full */ }
+    delete idleWriteQueue[k];
+  }
 }
+function saveJSON(key, value) {
+  idleWriteQueue[key] = value;
+  if (idleFlushScheduled) return;
+  idleFlushScheduled = true;
+  if (window.requestIdleCallback) window.requestIdleCallback(flushIdleWrites, { timeout: 2000 });
+  else setTimeout(flushIdleWrites, 0);
+}
+window.addEventListener('pagehide', flushIdleWrites);
 
 const icons = {
   heart: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.7-9.4-9.3C1.2 8 2.9 4.7 6 4.2c1.9-.3 3.7.6 4.6 2.1L12 8.3l1.4-2c.9-1.5 2.7-2.4 4.6-2.1 3.1.5 4.8 3.8 3.4 7-1.9 4.6-9.4 9.3-9.4 9.3z"/></svg>',
@@ -194,51 +252,26 @@ const toastIcons = {
   info: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
 };
 
-function toast(message, type = 'info', duration = 3000) {
+function toast(message, type = 'info', duration = 3000, action = null) {
   const stack = $('#toastStack');
-  if (!stack) { return; }
+  if (!stack) { action?.onClick?.(); return; }
   const node = document.createElement('div');
   node.className = `toast ${type}`;
   node.innerHTML = `${toastIcons[type] || toastIcons.info}<span>${escapeHtml(message)}</span>`;
+  if (action && action.label) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-action';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => { try { action.onClick?.(); } finally { node.remove(); } });
+    node.appendChild(btn);
+  }
   stack.appendChild(node);
   if (stack.children.length > 4) stack.firstElementChild.remove();
   setTimeout(() => {
     node.classList.add('out');
     node.addEventListener('animationend', () => node.remove(), { once: true });
-  }, duration);
-}
-
-let ytVerifyContext = null;
-
-function showYoutubeVerification(track, index, side) {
-  const overlay = $('#ytVerify');
-  if (!overlay || !track?.videoId) return;
-  ytVerifyContext = { track, index, side };
-  $('#ytVerifyTrackTitle').textContent = track.title || 'Трек';
-  $('#ytVerifyTrackArtist').textContent = track.artist || '';
-  const frame = $('#ytVerifyFrame');
-  if (frame) {
-    frame.src = `https://www.youtube.com/watch?v=${encodeURIComponent(track.videoId)}`;
-    $('#ytVerifyPage').hidden = false;
-  }
-  overlay.hidden = false;
-}
-
-function closeYoutubeVerification() {
-  const overlay = $('#ytVerify');
-  if (!overlay) return;
-  overlay.hidden = true;
-  const frame = $('#ytVerifyFrame');
-  if (frame) frame.src = 'about:blank';
-  ytVerifyContext = null;
-}
-
-function retryYoutubeVerification() {
-  const context = ytVerifyContext;
-  if (!context) return closeYoutubeVerification();
-  context.track._playAttempts = 0;
-  closeYoutubeVerification();
-  playTrackOn(context.track, context.index, context.side);
+  }, action ? Math.max(duration, 5000) : duration);
 }
 
 /* ============================================================
@@ -247,11 +280,13 @@ function retryYoutubeVerification() {
 
 let modalResolve = null;
 let modalMode = 'confirm';
+let modalReturnFocus = null;
 
 function confirmDialog({ title, body, confirmText = 'Подтвердить' }) {
   modalMode = 'confirm';
   return new Promise((resolve) => {
     const modal = $('#modal');
+    modalReturnFocus = document.activeElement;
     $('#modalTitle').textContent = title;
     $('#modalBody').textContent = body;
     $('#modalInput').hidden = true;
@@ -260,6 +295,7 @@ function confirmDialog({ title, body, confirmText = 'Подтвердить' }) 
     $('#modalConfirm').textContent = confirmText;
     modalResolve = resolve;
     modal.hidden = false;
+    setTimeout(() => $('#modalConfirm')?.focus(), 40);
   });
 }
 
@@ -267,10 +303,12 @@ function promptDialog({ title, placeholder = '', initial = '', confirmText = 'С
   modalMode = 'prompt';
   return new Promise((resolve) => {
     const modal = $('#modal');
+    modalReturnFocus = document.activeElement;
     $('#modalTitle').textContent = title;
     $('#modalBody').textContent = '';
     const input = $('#modalInput');
     input.placeholder = placeholder;
+    input.setAttribute('aria-label', title);
     input.value = initial;
     input.hidden = false;
     $('#modalList').hidden = true;
@@ -286,6 +324,7 @@ function chooseFromList({ title, rows, confirmText = 'Отмена' }) {
   modalMode = 'list';
   return new Promise((resolve) => {
     const modal = $('#modal');
+    modalReturnFocus = document.activeElement;
     $('#modalTitle').textContent = title;
     $('#modalBody').textContent = '';
     $('#modalInput').hidden = true;
@@ -309,13 +348,14 @@ function closeModal(result) {
   if (modalMode === 'prompt') out = result ? $('#modalInput').value.trim() : null;
   modalMode = 'confirm';
   if (modalResolve) { const r = modalResolve; modalResolve = null; r(out); }
+  if (modalReturnFocus?.focus) { try { modalReturnFocus.focus(); } catch (_) {} modalReturnFocus = null; }
 }
 
 /* ============================================================
    Settings
    ============================================================ */
 
-const DEFAULT_SETTINGS = { visualizer: true, ambient: true, keepVolume: true, autoAdd: false, offline: true, themeAuto: true, themeHue: null, led: true };
+const DEFAULT_SETTINGS = { visualizer: true, ambient: true, keepVolume: true, autoAdd: false, offline: true, themeAuto: true, themeHue: null, led: true, lowFx: false };
 let settings = Object.assign({}, DEFAULT_SETTINGS, loadJSON('umbrella_settings', {}));
 
 // ↔ config.py THEME_PRESETS — при изменении синхронизировать оба файла
@@ -363,11 +403,26 @@ function applySettings() {
     if (settings.ambient) { silk.resume(); $('#ambient').style.opacity = '1'; }
     else { silk.pause(); $('#ambient').style.opacity = '0.4'; }
   }
+  document.body.classList.toggle('low-fx', !!settings.lowFx);
+  if (settings.lowFx && silk) { silk.pause(); $('#ambient').style.opacity = '0'; }
   if (settings.led) startLedLoop();
   else stopLedLoop();
   if (audio.paused) startFloatingBlobs();
   else if (settings.visualizer) ensureAnalyser(), startBeatLoop();
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopLedLoop();
+    if (typeof beatRAF !== 'undefined' && beatRAF) { cancelAnimationFrame(beatRAF); beatRAF = null; }
+    if (typeof djBeatRAF !== 'undefined' && djBeatRAF) { cancelAnimationFrame(djBeatRAF); djBeatRAF = null; }
+    stopArtistWaves();
+  } else if (state.launched) {
+    applySettings();
+    if (!$('#vinylOverlay')?.hidden) startDjLoop();
+    if (!$('#artistDetail')?.hidden) startArtistWaves();
+  }
+});
 
 /* ============================================================
    Favorites
@@ -377,7 +432,6 @@ const FAV_KEY = 'umbrella_favorites';
 let favorites = loadJSON(FAV_KEY, []);
 
 function favKey(track) {
-  if (track.videoId) return `yt:${track.videoId}`;
   if (track.zvukId) return `zvuk:${track.zvukId}`;
   if (track.scId) return `sc:${track.scId}`;
   if (track.dbId) return `local:${track.dbId}`;
@@ -496,10 +550,24 @@ function addToPlaylist(playlistId, track) {
 
 function removeFromPlaylist(playlistId, key) {
   const pl = playlists.find((p) => p.id === playlistId);
-  if (!pl) return;
-  pl.tracks = pl.tracks.filter((t) => t.key !== key);
+  if (!pl) return null;
+  const idx = pl.tracks.findIndex((t) => t.key === key);
+  if (idx < 0) return null;
+  const [snap] = pl.tracks.splice(idx, 1);
   savePlaylists();
   renderCustomPlaylists();
+  return { snap, idx };
+}
+
+function restorePlaylistTrack(playlistId, removed) {
+  const pl = playlists.find((p) => p.id === playlistId);
+  if (!pl || !removed) return false;
+  if (pl.tracks.some((t) => t.key === removed.snap.key)) return false;
+  pl.tracks.splice(Math.min(removed.idx, pl.tracks.length), 0, removed.snap);
+  savePlaylists();
+  renderCustomPlaylists();
+  showPlaylistPage(playlistId);
+  return true;
 }
 
 function renamePlaylist(playlistId, name) {
@@ -579,8 +647,8 @@ const HIST_KEY = 'umbrella_history';
 let history = loadJSON(HIST_KEY, []);
 
 function addHistory(track) {
-  const key = track.zvukId || track.scUrl || track.scId || track.videoId || `${track.title}|${track.artist}`;
-  history = history.filter((h) => (h.zvukId || h.scUrl || h.scId || h.videoId || `${h.title}|${h.artist}`) !== key);
+  const key = track.zvukId || track.scUrl || track.scId || `${track.title}|${track.artist}`;
+  history = history.filter((h) => (h.zvukId || h.scUrl || h.scId || `${h.title}|${h.artist}`) !== key);
   history.unshift({
     title: track.title || 'Без названия',
     artist: track.artist || 'Неизвестный исполнитель',
@@ -608,7 +676,7 @@ function renderRecent() {
     <button class="recent-item" data-h="1">
       <span class="recent-ico">${icons.play}</span>
       <span class="recent-body">
-        <span class="recent-title">${escapeHtml(h.artist)} — ${escapeHtml(h.title)} <i>&bull; ${h.source === 'soundcloud' || h.source === 'youtube' ? 'Umbrella Search' : 'Локально'}</i></span>
+        <span class="recent-title">${escapeHtml(h.artist)} — ${escapeHtml(h.title)} <i>&bull; ${h.source === 'soundcloud' ? 'SoundCloud' : 'Локально'}</i></span>
         <small>${formatDuration(h.duration || 0)}</small>
       </span>
     </button>`).join('');
@@ -624,7 +692,7 @@ let listenLog = loadJSON(LL_KEY, []);
 
 function seedListenLog() {
   if (!listenLog.length && history.length) {
-    listenLog = history.map((h) => ({ title: h.title, artist: h.artist, source: h.source, videoId: h.videoId, at: h.at, duration: h.duration }));
+    listenLog = history.map((h) => ({ title: h.title, artist: h.artist, source: h.source, scUrl: h.scUrl || null, scId: h.scId || null, at: h.at, duration: h.duration }));
     saveJSON(LL_KEY, listenLog);
   }
 }
@@ -634,12 +702,13 @@ function recordListen(track) {
   if (!track) return;
   const now = Date.now();
   const last = listenLog[0];
-  if (last && now - (last.at || 0) < 15000 && (last.videoId === track.videoId || (last.title === track.title && last.artist === track.artist))) return;
+  if (last && now - (last.at || 0) < 15000 && ((last.scUrl && last.scUrl === track.scUrl) || (last.scId && last.scId === track.scId) || (last.title === track.title && last.artist === track.artist))) return;
   listenLog.unshift({
     title: track.title || 'Без названия',
     artist: track.artist || 'Неизвестный исполнитель',
     source: track.source || 'local',
-    videoId: track.videoId || null,
+    scUrl: track.scUrl || track.url || null,
+    scId: track.scId || null,
     duration: track.duration || 0,
     at: now,
   });
@@ -650,6 +719,50 @@ function recordListen(track) {
 function clearListenLog() {
   listenLog = [];
   saveJSON(LL_KEY, listenLog);
+}
+
+// Реальные секунды прослушивания по дням (локальная дата YYYY-MM-DD).
+// В отличие от listenLog (факты включения), считает только звучание:
+// пауза не идёт в зачёт, перемотка назад идёт повторно — честно.
+const LS_KEY = 'umbrella_listen_sec';
+let listenSecByDay = loadJSON(LS_KEY, {});
+let listenAccum = 0;
+let listenLastT = 0;
+let listenFlushAt = 0;
+
+function listenLocalDay(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function flushListenSec() {
+  if (listenAccum < 1) return;
+  const day = listenLocalDay();
+  listenSecByDay[day] = Math.round((listenSecByDay[day] || 0) + listenAccum);
+  listenAccum = 0;
+  saveJSON(LS_KEY, listenSecByDay);
+}
+
+function listenTick() {
+  const el = (typeof djActiveElement === 'function' ? djActiveElement() : audio);
+  const now = performance.now() / 1000;
+  if (!el || el.paused) { listenLastT = 0; return; }
+  if (listenLastT) {
+    const dt = now - listenLastT;
+    if (dt > 0 && dt < 5) listenAccum += dt;
+  }
+  listenLastT = now;
+  if (now - listenFlushAt > 20) { listenFlushAt = now; flushListenSec(); }
+}
+setInterval(listenTick, 1000);
+window.addEventListener('pagehide', flushListenSec);
+
+function listenSecInPeriod(sinceMs) {
+  let total = 0;
+  for (const [day, sec] of Object.entries(listenSecByDay)) {
+    const t = new Date(day + 'T00:00:00').getTime();
+    if (Number.isFinite(t) && t >= sinceMs - 86400000 && sec > 0) total += sec;
+  }
+  return Math.round(total);
 }
 
 /* ============================================================
@@ -805,7 +918,9 @@ function updateBgState() {
   const playing = !el.paused;
   if (playing && settings.visualizer) {
     ensureAnalyser();
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume().catch((e) => console.warn('[Audio] resume in updateBgState failed', e));
+    }
     startBeatLoop();
   } else {
     startFloatingBlobs();
@@ -972,24 +1087,6 @@ function getBlobFromIDB(dbId) {
   }));
 }
 
-function idbSaveOffline(videoId, blob, meta) {
-  return openIDB().then((db) => new Promise((resolve, reject) => {
-    const tx = db.transaction(DB_OFFLINE, 'readwrite');
-    tx.objectStore(DB_OFFLINE).put({ videoId, blob, ...meta, downloadedAt: Date.now() });
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  }));
-}
-
-function idbGetOffline(videoId) {
-  return openIDB().then((db) => new Promise((resolve, reject) => {
-    const tx = db.transaction(DB_OFFLINE, 'readonly');
-    const req = tx.objectStore(DB_OFFLINE).get(videoId);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  }));
-}
-
 function idbClearOffline() {
   return openIDB().then((db) => new Promise((resolve, reject) => {
     const tx = db.transaction(DB_OFFLINE, 'readwrite');
@@ -1032,41 +1129,41 @@ function idbClearCustomCover() {
 async function loadTracksFromIDB() {
   try {
     const rows = await idbGetAll();
-    return rows.map((r) => ({
+    // Миграция после удаления YouTube: записи без аудиоблоба и с
+    // source youtube не воспроизвести — вычищаем их из библиотеки.
+    const dead = rows.filter((r) => r.source === 'youtube' || (r.dbId == null && !r.blob && !r.videoId && r.source !== 'local'));
+    const live = rows.filter((r) => !dead.includes(r));
+    for (const d of dead) {
+      try { await idbDelete(d.id); } catch (e) { /* ignore */ }
+    }
+    if (dead.length) {
+      setTimeout(() => toast(`Удалено недоступных треков: ${dead.length} (YouTube больше не поддерживается)`, 'info', 4000), 2500);
+    }
+    // Чистим офлайн-кэш YouTube прошлых версий (кроме кастомной обложки).
+    try {
+      const db = await openIDB();
+      const keys = await new Promise((res, rej) => {
+        const tx = db.transaction(DB_OFFLINE, 'readonly');
+        const rq = tx.objectStore(DB_OFFLINE).getAllKeys();
+        rq.onsuccess = () => res(rq.result || []);
+        rq.onerror = () => rej(rq.error);
+      });
+      for (const k of keys) {
+        if (k === CUSTOM_COVER_KEY) continue;
+        await new Promise((res, rej) => {
+          const tx = db.transaction(DB_OFFLINE, 'readwrite');
+          const rq = tx.objectStore(DB_OFFLINE).delete(k);
+          rq.onsuccess = () => res();
+          rq.onerror = () => rej(rq.error);
+        });
+      }
+    } catch (e) { /* ignore */ }
+    return live.map((r) => ({
       id: r.id, title: r.title, artist: r.artist, album: r.album,
       duration: r.duration, color: r.color, dbId: r.id,
       source: r.source || 'local', videoId: r.videoId || null, thumbnail: r.thumbnail || null,
     }));
   } catch (e) { return []; }
-}
-
-async function idbSaveYouTube(meta) {
-  // Проверяем, нет ли уже такого трека по videoId
-  const existing = state.tracks.find(t => t.videoId === meta.videoId && t.source === 'youtube');
-  if (existing && existing.dbId) {
-    console.log('[IDB] Track already exists with dbId:', existing.dbId);
-    return existing.dbId;
-  }
-  
-  const record = { 
-    title: meta.title, 
-    artist: meta.artist, 
-    album: meta.album || '',
-    duration: meta.duration || 0, 
-    thumbnail: meta.thumbnail || '', 
-    videoId: meta.videoId, 
-    source: 'youtube',
-    color: meta.color || ''
-  };
-  
-  try {
-    const dbId = await idbTx(DB_STORE, 'readwrite', (s) => s.add(record));
-    console.log('[IDB] Saved track with dbId:', dbId);
-    return dbId;
-  } catch (e) {
-    console.error('[IDB] Error saving track:', e);
-    throw e;
-  }
 }
 
 /* ============================================================
@@ -1079,8 +1176,15 @@ function animateNumber(el, target, suffix = '') {
   el.textContent = target + suffix;
 }
 
+let _usTracksRef = null;
+let _usKey = '';
 function updateStats() {
   const tracks = state.tracks;
+  const plTracks = playlists.reduce((s, p) => s + (p.tracks ? p.tracks.length : 0), 0);
+  const key = tracks.length + ':' + favorites.length + ':' + playlists.length + ':' + plTracks + ':' + history.length;
+  if (tracks === _usTracksRef && key === _usKey) return;
+  _usTracksRef = tracks;
+  _usKey = key;
   const total = tracks.length;
   animateNumber($('#statTracks'), total);
   const artists = new Set(tracks.map((t) => (t.artist || '').toLowerCase()).filter(Boolean));
@@ -1155,12 +1259,15 @@ function renderStatsDashboard() {
   wrap.hidden = false;
   empty.hidden = true;
 
-  const totalSec = rows.reduce((s, r) => s + (r.duration || 0), 0);
+  const realSec = listenSecInPeriod(since);
+  const totalSec = realSec > 0
+    ? realSec
+    : rows.reduce((s, r) => s + (r.duration || 0), 0);
   animateNumber($('#lstatPlays'), rows.length);
   $('#lstatTime').textContent = fmtStatTime(totalSec);
   const artSet = new Set(rows.map((r) => (r.artist || '').toLowerCase()).filter(Boolean));
   animateNumber($('#lstatArtists'), artSet.size);
-  const trkSet = new Set(rows.map((r) => (r.videoId || `${r.title}|${r.artist}`).toLowerCase()));
+  const trkSet = new Set(rows.map((r) => (r.scId || r.scUrl || `${r.title}|${r.artist}`).toLowerCase()));
   animateNumber($('#lstatTracks'), trkSet.size);
 
   renderStatBars($('#topArtists'), aggStats(rows, (r) => r.artist || 'Неизвестный исполнитель', (r) => r.title || ''));
@@ -1433,7 +1540,7 @@ function showPlaylistPage(playlistId) {
   const listHtml = tracks.length
     ? tracks.map((t, i) => `
       <div class="album-detail-row" data-idx="${i}">
-        ${t.thumbnail ? `<img class="yt-thumb-sm" src="${escapeHtml(t.thumbnail)}" alt="" loading="lazy" />` : `<span class="pos">${String(i + 1).padStart(2, '0')}</span>`}
+        ${t.thumbnail ? `<img class="sc-thumb-sm" src="${escapeHtml(t.thumbnail)}" alt="" loading="lazy" />` : `<span class="pos">${String(i + 1).padStart(2, '0')}</span>`}
         <span class="name">${escapeHtml(t.title)}</span>
         <span class="artist-sub">${escapeHtml(t.artist)}</span>
         <span class="dur">${formatDuration(t.duration)}</span>
@@ -1484,8 +1591,14 @@ function showPlaylistPage(playlistId) {
     if (del) {
       del.onclick = (e) => {
         e.stopPropagation();
-        removeFromPlaylist(playlistId, del.dataset.key);
+        const removed = removeFromPlaylist(playlistId, del.dataset.key);
+        if (!removed) return;
         showPlaylistPage(playlistId);
+        toast('Трек убран из плейлиста', 'info', 5000, {
+          label: 'Отменить',
+          onClick: () => restorePlaylistTrack(playlistId, removed),
+        });
+        return;
       };
       return;
     }
@@ -1525,27 +1638,27 @@ function hslToRgbString(h, s, l) {
 function isCurrent(track) {
   const c = state.currentTrack;
   if (!c) return false;
-  if (track.videoId && c.videoId) return track.videoId === c.videoId;
+  if (track.scId && c.scId) return track.scId === c.scId;
+  if (track.dbId && c.dbId) return track.dbId === c.dbId;
   return c.title === track.title && c.artist === track.artist;
 }
 
 function trackRow(track, index, mode) {
   const title = escapeHtml(track.title || 'Без названия');
   const artist = escapeHtml(track.artist || 'Неизвестный исполнитель');
-  const isYt = track.source === 'youtube';
   const isSc = track.source === 'soundcloud';
   const playing = !(mode === 'search') && isCurrent(track);
   const numContent = playing ? icons.eq : String(index + 1).padStart(2, '0');
   const art = track.thumbnail || track.cover;
-  const thumb = ((isYt || isSc) && art)
-    ? `<img class="yt-thumb" src="${escapeHtml(art)}" alt="" loading="lazy" />`
+  const thumb = (isSc && art)
+    ? `<img class="sc-thumb" src="${escapeHtml(art)}" alt="" loading="lazy" />`
     : `<span class="track-cover" style="--cover:${track.color || coverGradient(index)}"></span>`;
   const favBtn = `<button class="track-fav ${isFavTrack(track) ? 'active' : ''}" data-fav="${escapeHtml(favKey(track))}" aria-label="В избранное" title="В избранное">${icons.heart}</button>`;
   const plBtn = `<button class="track-pl" data-pl aria-label="В плейлист" title="В плейлист"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg><span>В плейлист</span></button>`;
-  const dlBtn = ((isYt && track.videoId) || isSc) ? `<button class="track-dl" data-dl="${escapeHtml(isYt ? track.videoId : (track.scId || track.url || ''))}" aria-label="Скачать" title="${isYt ? 'Скачать офлайн' : 'Скачать в библиотеку'}">${icons.download}<span>${isYt ? 'Скачать офлайн' : 'Скачать в библиотеку'}</span></button>` : '';
-  const delBtn = (mode === 'library' || mode === 'yt') ? `<button class="track-del" data-del="${track.id}" aria-label="Удалить" title="Удалить из библиотеки">${icons.trash}<span>Удалить из библиотеки</span></button>` : '';
+  const dlBtn = isSc ? `<button class="track-dl" data-dl="${escapeHtml(track.scId || track.url || '')}" aria-label="Скачать" title="Скачать в библиотеку">${icons.download}<span>Скачать в библиотеку</span></button>` : '';
+  const delBtn = (mode === 'library') ? `<button class="track-del" data-del="${track.id}" aria-label="Удалить" title="Удалить из библиотеки">${icons.trash}<span>Удалить из библиотеки</span></button>` : '';
   const menu = `<span class="track-more-wrap"><button class="track-more" aria-label="Ещё" title="Ещё">${icons.more}</button><span class="track-menu" hidden>${plBtn}${dlBtn}${delBtn}</span></span>`;
-  const album = isYt ? 'Umbrella Search' : (isSc ? 'SoundCloud' : escapeHtml(track.album || ''));
+  const album = isSc ? 'SoundCloud' : escapeHtml(track.album || '');
   const actionLabel = 'Играть';
   return `<article class="track-row ${playing ? 'playing' : ''}" data-index="${index}" data-source="${mode}" draggable="true" title="Играть · перетащите на вертушку, чтобы поставить пластинку">
     <span class="track-number">${numContent}</span>
@@ -1557,34 +1670,22 @@ function trackRow(track, index, mode) {
   </article>`;
 }
 
-function renderTracks() {
+function renderTracks(animate = true) {
   const query = ($('#filterInput').value || '').trim().toLowerCase();
-  // Показываем ВСЕ треки (и локальные, и Umbrella Search)
+  // Показываем ВСЕ треки (локальные и из SoundCloud)
   let tracks = state.tracks.filter((t) => `${t.title} ${t.artist}`.toLowerCase().includes(query));
   if (!state.sortNewest) tracks = [...tracks].reverse();
   state.visibleTracks = tracks;
   const list = $('#trackList');
   list.innerHTML = tracks.length
     ? tracks.map((t, i) => trackRow(t, i, 'library')).join('')
-    : `<div class="empty-search"><div class="empty-illu">${icons.heart}</div><h2>Треки не найдены</h2><p>Добавьте трек с устройства или найдите его на YouTube.</p></div>`;
-  // Скрываем отдельную секцию YouTube музыка, так как все треки теперь в одном списке
-  const ytSection = $('#ytSection');
-  if (ytSection) ytSection.hidden = true;
+    : `<div class="empty-search"><div class="empty-illu">${icons.heart}</div><h2>Треки не найдены</h2><p>Добавьте трек с устройства или найдите его в SoundCloud.</p></div>`;
   updateStats();
-  if (window.gsap && tracks.length && !reduceMotion()) {
+  if (animate && window.gsap && tracks.length && !reduceMotion()) {
     gsap.fromTo('#trackList .track-row',
       { opacity: 0, y: 16, scale: 0.98 },
       { opacity: 1, y: 0, scale: 1, duration: 0.35, ease: 'power2.out', stagger: 0.025, clearProps: 'transform' });
   }
-}
-
-function renderYouTubeTracks() {
-  const ytTracks = state.tracks.filter((t) => t.source === 'youtube');
-  const section = $('#ytSection');
-  const list = $('#ytTrackList');
-  if (!ytTracks.length) { section.hidden = true; list.innerHTML = ''; return; }
-  section.hidden = false;
-  list.innerHTML = ytTracks.map((t, i) => trackRow(t, i, 'yt')).join('');
 }
 
 function renderFavorites() {
@@ -1617,23 +1718,23 @@ function effectiveDuration() {
 }
 
 async function resolveTrack(track) {
-  if ((!track.scUrl && !track.scId && !track.videoId) && track._needsLookup) {
+  if (track.dbId) {
+    const blob = await getBlobFromIDB(track.dbId);
+    if (!blob) throw new Error('Файл не найден в хранилище');
+    if (track._blobUrl) URL.revokeObjectURL(track._blobUrl);
+    track._blobUrl = URL.createObjectURL(blob);
+    return track._blobUrl;
+  }
+  if ((!track.scUrl && !track.scId) && track._needsLookup) {
     const data = await request(`/sc/search?q=${encodeURIComponent(track._needsLookup)}&count=1`, { timeout: API_TIMEOUT.default });
     const found = (data.tracks || [])[0];
-    if (!found) throw new Error('Трек не найден в Umbrella Search');
+    if (!found) throw new Error('Трек не найден в SoundCloud');
     track.scUrl = found.url;
     track.scId = found.id;
     track.source = 'soundcloud';
     track.thumbnail = track.thumbnail || found.thumbnail || '';
     track.duration = track.duration || found.duration || 0;
     track._needsLookup = null;
-  }
-  if (track.dbId && track.source !== 'youtube') {
-    const blob = await getBlobFromIDB(track.dbId);
-    if (!blob) throw new Error('Файл не найден в хранилище');
-    if (track._blobUrl) URL.revokeObjectURL(track._blobUrl);
-    track._blobUrl = URL.createObjectURL(blob);
-    return track._blobUrl;
   }
   if (track.source === 'zvuk') {
     const zid = track.zvukId || track.id;
@@ -1646,17 +1747,7 @@ async function resolveTrack(track) {
     if (!scUrl) throw new Error('Нет ссылки на трек SoundCloud');
     return `${API}/sc/stream?url=${encodeURIComponent(scUrl)}`;
   }
-   if (track.source === 'youtube' && track.videoId) {
-     const offline = await idbGetOffline(track.videoId);
-     if (offline && offline.blob) {
-       if (track._blobUrl) URL.revokeObjectURL(track._blobUrl);
-       track._blobUrl = URL.createObjectURL(offline.blob);
-       return track._blobUrl;
-     }
-     return `${API}/youtube/stream?videoId=${encodeURIComponent(track.videoId)}&attempt=${track._playAttempts || 0}`;
-   }
    if (track.previewUrl) return track.previewUrl;
-   if (track.link) return `${API}/music/stream?url=${encodeURIComponent(track.link)}`;
    if (track.url) return track.url;
    throw new Error('Ссылка на аудиопоток отсутствует');
  }
@@ -1824,28 +1915,26 @@ async function playTrackOn(track, index, side) {
     gain.gain.setValueAtTime(0, audioCtx.currentTime);
   }
   
-  const retryYouTubePlayback = () => {
+  // Ошибка сети/декодирования: один повтор со свежей подписью потока
+  // (подписанные URL SoundCloud протухают), затем честная ошибка.
+  const retryStreamPlayback = () => {
     if (gen !== state._trackGen) return true;
     // error и play().catch() могут прийти почти одновременно. Если повтор
     // уже запланирован, считаем сбой обработанным и не пугаем пользователя.
     if (track._retryPending) return true;
-    if (track.source !== 'youtube' || !track.videoId) return false;
     const attempts = Number(track._playAttempts || 0);
-    if (attempts >= 2) {
-      showYoutubeVerification(track, index, side);
-      return true;
-    }
+    if (attempts >= 1) return false;
     track._playAttempts = attempts + 1;
     track._retryPending = true;
     showPlaybackLoading(track);
     setTimeout(() => {
       track._retryPending = false;
       playTrackOn(track, index, side);
-    }, 700 + attempts * 500);
+    }, 700);
     return true;
   };
 
-  // Ошибка сети/декодирования YouTube сначала получает свежий поток.
+  // Ошибка сети/декодирования сначала получает свежий поток.
   const errorHandler = () => {
     const err = el.error;
     if (!err) return;
@@ -1859,8 +1948,8 @@ async function playTrackOn(track, index, side) {
     
     console.error(`[Player] Ошибка воспроизведения ${track.title}: ${errMsg}`, err);
     
-    if (retryYouTubePlayback()) {
-      console.warn(`[Player] Повтор потока ${track._playAttempts}/2: ${track.videoId}`);
+    if (retryStreamPlayback()) {
+      console.warn(`[Player] Повтор потока ${track._playAttempts}/1: ${track.title}`);
       el.removeEventListener('error', errorHandler);
     } else {
       cancelCoreTransition();
@@ -1907,12 +1996,19 @@ async function playTrackOn(track, index, side) {
   el.addEventListener('playing', playingHandler);
   
   const isHls = url.includes('.m3u8') || url.includes('mpegurl');
+  if (settings.visualizer) {
+    ensureAnalyser();
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume().catch((e) => console.warn('[Audio] resume before play failed', e));
+    }
+  }
+
   if (isHls) {
     if (!attachHlsOn(el, url, isB)) {
       el.src = url;
       el.play().catch((e) => {
         console.error('[Player] Play failed:', e);
-        if (!retryYouTubePlayback()) {
+        if (!retryStreamPlayback()) {
           cancelCoreTransition();
           el.playbackRate = 1;
           el.volume = preferredVolume;
@@ -1927,7 +2023,7 @@ async function playTrackOn(track, index, side) {
     el.src = url;
     el.play().catch((e) => {
       console.error('[Player] Play failed:', e);
-      if (!retryYouTubePlayback()) {
+      if (!retryStreamPlayback()) {
         cancelCoreTransition();
         el.playbackRate = 1;
         el.volume = preferredVolume;
@@ -1961,11 +2057,6 @@ async function playTrackOn(track, index, side) {
     addHistory(track);
     state._listenLogged = false;
     state._listenTrack = track;
-
-    if (settings.autoAdd && track.source === 'youtube' && track.videoId && !state.tracks.some((t) => t.videoId === track.videoId)) {
-      const dbId = await idbSaveYouTube(track);
-      state.tracks.unshift({ ...track, id: dbId, dbId });
-    }
 
     $$('.track-row').forEach((row) => row.classList.toggle('playing', Number(row.dataset.index) === index && row.dataset.source === (track._favSource || '')));
     updatePlayingGlow();
@@ -2242,10 +2333,10 @@ function updateLibraryButtonState() {
   }
   
   let inLibrary = false;
-  
-  // Для YouTube треков проверяем по videoId
-  if (track.source === 'youtube' && track.videoId) {
-    inLibrary = state.tracks.some(t => t.videoId === track.videoId && t.source === 'youtube');
+
+  // Для SoundCloud проверяем скачанные (библиотека = sc_music на диске)
+  if (track.source === 'soundcloud') {
+    inLibrary = isScDownloaded(track);
   }
   // Для локальных треков проверяем по dbId
   else if (track.dbId) {
@@ -2366,7 +2457,7 @@ function renderCustomCover() {
     wrap.innerHTML = `<video src="${state.customCover.url}" autoplay muted loop playsinline></video>`;
   } else {
     if (wrap.querySelector('img')) return;
-    wrap.innerHTML = `<img src="${state.customCover.url}" alt="Обложка" />`;
+    wrap.innerHTML = `<img src="${state.customCover.url}" alt="Обложка" loading="lazy" />`;
   }
 }
 
@@ -2408,13 +2499,14 @@ async function loadCustomCover() {
   } catch (e) { /* ignore */ }
 }
 
-/* Позиция трека в очереди: по ссылке, иначе по videoId/имени (копии объектов). */
+/* Позиция трека в очереди: по ссылке SoundCloud, иначе по имени (копии объектов). */
 function queueIndexOf(list, track) {
   if (!list || !list.length || !track) return -1;
   const byRef = list.indexOf(track);
   if (byRef !== -1) return byRef;
-  if (track.videoId) {
-    const i = list.findIndex((t) => t && t.videoId === track.videoId);
+  if (track.scUrl || track.scId) {
+    const key = track.scUrl || track.scId;
+    const i = list.findIndex((t) => t && (t.scUrl === key || t.scId === key));
     if (i !== -1) return i;
   }
   const key = `${(track.title || '').toLowerCase()}|${(track.artist || '').toLowerCase()}`;
@@ -2470,7 +2562,7 @@ function togglePlay() {
 function handleTrackEnded() {
   if (state._ending) return;
   state._ending = true;
-  // Страховка: если следующий трек не запустится (мёртвая ссылка YouTube/SoundCloud),
+  // Страховка: если следующий трек не запустится (мёртвая ссылка),
   // защёлка снимется сама и автопереход продолжит работать.
   clearTimeout(state._endingTimer);
   state._endingTimer = setTimeout(() => { state._ending = false; }, 8000);
@@ -2513,13 +2605,10 @@ audio.addEventListener('loadedmetadata', () => { if (state._activeAudioSide === 
 audio.addEventListener('play', () => { if (state._activeAudioSide === 'a') { state._ending = false; setPlayIcons(false); updateBgState(); syncVideo(); } });
 audio.addEventListener('pause', () => { if (state._activeAudioSide === 'a' && !coreTransition) { setPlayIcons(true); updateBgState(); syncVideo(); } });
 audio.addEventListener('ended', () => { if (state._activeAudioSide === 'a' && !coreTransition) handleTrackEnded(); });
-// Мёртвый поток (YouTube/SoundCloud отдал ошибку) — не молчим, а идём дальше.
+// Мёртвый поток (SoundCloud отдал ошибку) — не молчим, а идём дальше.
 audio.addEventListener('error', () => {
   if (state._activeAudioSide !== 'a') return;
   if (!state.currentTrack) return;
-  // YouTube обрабатывается локальным retry-обработчиком в playTrackOn().
-  // Не запускаем одновременно автопропуск очереди и получение свежего потока.
-  if (state.currentTrack.source === 'youtube') return;
   clearTimeout(state._endingTimer);
   state._ending = false;
   const list = state.visibleTracks;
@@ -2578,6 +2667,21 @@ function attachHls(url) {
   return attachHlsOn(audio, url, false);
 }
 
+let hlsLoading = null;
+function ensureHls() {
+  if (window.Hls) return Promise.resolve(true);
+  if (hlsLoading) return hlsLoading;
+  hlsLoading = new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = 'hls.min.js';
+    s.onload = () => resolve(!!window.Hls);
+    s.onerror = () => resolve(false);
+    document.head.appendChild(s);
+    setTimeout(() => resolve(!!window.Hls), 8000);
+  }).then((ok) => { if (!ok) hlsLoading = null; return ok; });
+  return hlsLoading;
+}
+
 function attachHlsOn(el, url, isB) {
   if (isB) {
     if (state.hlsB) { state.hlsB.destroy(); state.hlsB = null; }
@@ -2589,6 +2693,13 @@ function attachHlsOn(el, url, isB) {
     hls.on(window.Hls.Events.MANIFEST_PARSED, () => el.play().catch(() => {}));
     if (isB) state.hlsB = hls;
     else state.hls = hls;
+    return true;
+  }
+  if (!isB) {
+    ensureHls().then((ok) => {
+      if (ok) attachHlsOn(el, url, false);
+      else el.src = url;
+    });
     return true;
   }
   return false;
@@ -2612,7 +2723,7 @@ function buildWaveform(arrayBuffer) {
     try {
       const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
       const ctx = new Ctx(1, 1, 44100);
-      ctx.decodeAudioData(arrayBuffer.slice(0), (buffer) => {
+      ctx.decodeAudioData(arrayBuffer, (buffer) => {
         const raw = buffer.getChannelData(0);
         const block = Math.floor(raw.length / WAVE_BARS) || 1;
         const peaks = new Array(WAVE_BARS).fill(0);
@@ -2774,8 +2885,6 @@ async function searchZvuk(query, count = 18) {
   const res = await request(`/zvuk/search?q=${encodeURIComponent(query)}&count=${count}`, { timeout: API_TIMEOUT.search });
   return (res.tracks || []).map((t) => ({ ...t, source: 'zvuk', zvukId: t.id, thumbnail: t.thumbnail || '', duration: t.duration || 0 }));
 }
-async function searchYouTube(query, count = 20) { return searchSC(query, count); }
-
 async function fetchRelatedTracksSC(artist, title) {
   try {
     const q = [artist, title].filter(Boolean).join(' ');
@@ -2783,7 +2892,6 @@ async function fetchRelatedTracksSC(artist, title) {
     return res.tracks || [];
   } catch (e) { return []; }
 }
-async function fetchRelatedTracks(videoId) { return []; }
 
 function buildRadioTrack(item) {
   return { title: item.title, artist: item.artist, scUrl: item.url || item.scUrl, scId: item.id || item.scId, source: 'soundcloud', thumbnail: item.thumbnail, duration: item.duration || 0, album: 'Umbrella Radio', color: '' };
@@ -2821,7 +2929,7 @@ async function startArtistRadio(artist) {
 async function playNextRadio() {
   if (!state.radioMode || !state.currentTrack) return;
   const cur = state.currentTrack;
-  const curId = cur.scUrl || cur.scId || cur.videoId;
+  const curId = cur.scUrl || cur.scId;
   if (curId) state.radioPlayedIds.add(curId);
   if (state.radioQueue.length === 0) {
     if (state.radioKind === 'artist' && state.radioQuery) {
@@ -2844,7 +2952,7 @@ async function playNextRadio() {
     return;
   }
   const next = state.radioQueue.shift();
-  if (!next || (!next.scUrl && !next.scId && !next.videoId)) { nextTrack(); return; }
+  if (!next || (!next.scUrl && !next.scId)) { nextTrack(); return; }
   state.visibleTracks.push(next);
   playTrack(next, state.visibleTracks.length - 1);
 }
@@ -2889,7 +2997,7 @@ function renderQueue() {
     const isRadio = !tail.includes(t);
     return `
     <div class="np-queue-item" data-qidx="${i}" data-vidx="${isRadio ? -1 : i}" data-kind="${isRadio ? 'radio' : 'vt'}" ${isRadio ? '' : 'draggable="true"'}>
-      ${t.thumbnail ? `<img src="${escapeHtml(t.thumbnail)}" alt="" />` : `<span class="q-cover" style="--cover:${t.color || coverGradient(i)}"></span>`}
+      ${t.thumbnail ? `<img src="${escapeHtml(t.thumbnail)}" alt="" loading="lazy" />` : `<span class="q-cover" style="--cover:${t.color || coverGradient(i)}"></span>`}
       <div class="q-meta"><b>${escapeHtml(t.title || 'Без названия')}</b><small>${escapeHtml(t.artist || '')}</small></div>
       <span class="q-dur">${formatDuration(t.duration)}</span>
     </div>`;
@@ -2914,7 +3022,7 @@ function reorderQueueItem(fromIdx, toIdx) {
 function switchView(view) {
   const meta = {
     library: ['Библиотека', 'Ваша музыка. Ваше пространство.'],
-    search: ['Поиск', 'Найдите треки и альбомы на Umbrella Search'],
+    search: ['Поиск', 'Найдите треки и альбомы в SoundCloud'],
     favorites: ['Избранное', 'Любимые треки и исполнители'],
     playlists: ['Плейлисты', 'Ваши подборки и Избранное'],
     radio: ['Радио', 'Бесконечный поток под ваше настроение'],
@@ -2958,7 +3066,14 @@ function switchView(view) {
   if (view === 'stats') renderStatsDashboard();
   if (view === 'archaeo' && typeof renderArchaeo === 'function') renderArchaeo();
   if (view === 'search') setTimeout(() => $('#searchInput')?.focus(), 80);
+  try { if (('#' + view) !== location.hash) history.replaceState(null, '', '#' + view); } catch (_) {}
 }
+
+window.addEventListener('hashchange', () => {
+  if (!state.launched) return;
+  const h = location.hash.slice(1);
+  if (h) switchView(h);
+});
 
 async function search() {
   const query = $('#searchInput').value.trim();
@@ -2971,7 +3086,6 @@ async function search() {
   const isAlbums = state.searchSource === 'albums';
   const isPlaylists = state.searchSource === 'playlists';
   const isSc = state.searchSource === 'soundcloud';
-  const isYt = state.searchSource === 'youtube';
   $('#searchResults').hidden = isAlbums || isPlaylists;
   $('#albumResults').hidden = !isAlbums;
   $('#albumDetail').hidden = true;
@@ -3009,7 +3123,6 @@ async function performSearch(query) {
   const isPlaylists = source === 'playlists';
   const isSc = source === 'soundcloud';
   const isZvuk = source === 'zvuk';
-  const isYt = source === 'youtube';
   $('#searchResults').hidden = isAlbums || isPlaylists;
   $('#albumResults').hidden = !isAlbums;
   $('#albumDetail').hidden = true;
@@ -3171,24 +3284,9 @@ async function searchPlaylistsUnified(query, gen) {
   el.hidden = false;
   el.innerHTML = '<div class="empty-search" style="padding:30px"><p>Поиск плейлистов…</p></div>';
   try {
-    const [ytRes, scRes] = await Promise.allSettled([
-      request(`/youtube/search?q=${encodeURIComponent(query)}&count=10&type=playlist`, { timeout: API_TIMEOUT.default }),
-      request(`/sc/search?q=${encodeURIComponent(query)}&count=10`, { timeout: API_TIMEOUT.search }),
-    ]);
+    const scRes = await request(`/sc/search?q=${encodeURIComponent(query)}&count=10`, { timeout: API_TIMEOUT.search });
     const playlists = [];
-    if (ytRes.status === 'fulfilled' && ytRes.value.playlists) {
-      ytRes.value.playlists.forEach((p) => playlists.push({
-        id: `yt_pl_${p.id}`,
-        title: p.title,
-        owner: p.channel || '',
-        cover: p.thumbnail,
-        trackCount: p.videoCount || 0,
-        source: 'youtube',
-        type: 'playlist',
-        url: p.url,
-      }));
-    }
-    if (scRes.status === 'fulfilled' && scRes.value.tracks) {
+    if (scRes.tracks) {
       const sets = new Map();
       scRes.value.tracks.forEach((t) => {
         const setName = t.playlist || t.set || t.uploader || 'SoundCloud';
@@ -3247,31 +3345,22 @@ function renderAlbums(albums) {
   }
 }
 
-async function importYouTubePlaylist(url) {
+async function importSoundcloudSet(url) {
   url = (url || '').trim();
   if (!url) return toast('Вставьте ссылку на плейлист');
   const isScSet = /soundcloud\.com\/.+\/sets\//.test(url);
-  const isYt = /youtube\.com\/(playlist|watch)|youtu\.be/.test(url);
-  if (!isScSet && !isYt) {
-    return toast('Это не похоже на ссылку на плейлист (поддерживается SoundCloud)', 'error');
-  }
-  if (isYt) {
-    return toast('YouTube-плейлисты отключены — используйте SoundCloud', 'info');
+  if (!isScSet) {
+    return toast('Это не похоже на ссылку на сет SoundCloud', 'error');
   }
   const banner = $('#playlistBanner');
   const results = $('#searchResults');
   results.innerHTML = '<div class="empty-search" style="padding:30px"><p>Загрузка плейлиста…</p></div>';
   banner.hidden = true;
   try {
-    let data;
-    if (isScSet) {
-      const setName = decodeURIComponent((url.split('/sets/')[1] || '').split('?')[0]).replace(/[-_]/g, ' ');
-      const scData = await request(`/sc/search?q=${encodeURIComponent(setName)}&count=20`, { timeout: API_TIMEOUT.default });
-      data = { title: setName || 'SoundCloud Set', tracks: (scData.tracks || []).slice(0, 20) };
-    } else {
-      data = await request(`/youtube/playlist?url=${encodeURIComponent(url)}&count=100`, { timeout: API_TIMEOUT.search });
-    }
-    const tracks = (data.tracks || []).map((t) => ({ ...t, source: isScSet ? 'soundcloud' : 'youtube', scId: t.id, scUrl: t.url, album: isScSet ? 'SoundCloud' : 'Umbrella Search' }));
+    const setName = decodeURIComponent((url.split('/sets/')[1] || '').split('?')[0]).replace(/[-_]/g, ' ');
+    const scData = await request(`/sc/search?q=${encodeURIComponent(setName)}&count=20`, { timeout: API_TIMEOUT.default });
+    const data = { title: setName || 'SoundCloud Set', tracks: (scData.tracks || []).slice(0, 20) };
+    const tracks = (data.tracks || []).map((t) => ({ ...t, source: 'soundcloud', scId: t.id, scUrl: t.url, album: 'SoundCloud' }));
     if (!tracks.length) {
       results.innerHTML = '<div class="empty-search"><h2>Плейлист пуст</h2><p>Не удалось получить треки.</p></div>';
       return;
@@ -3348,8 +3437,12 @@ async function waitSoundcloudJob(jobId, track) {
         if (s.state === 'done') {
           if (s.files && s.files.length) {
             const path = s.files[0];
-            const key = track.scId || track.scUrl || track.url;
-            state.scDownloaded[key] = path;
+            const key = scKey(track);
+            if (key) {
+              state.scDownloaded[key] = path;
+              scUrlMap[key] = path;
+              saveJSON('umbrella_scmap', scUrlMap);
+            }
             const [title = path, artist = ''] = path.split(' - ', 2);
             state.scLibTracks.push({ title, artist, name: path, path, size: 0, ext: 'mp3', source: 'soundcloud', duration: 0 });
             renderScLibrary();
@@ -3372,9 +3465,9 @@ async function waitSoundcloudJob(jobId, track) {
 
 async function downloadSoundcloudTrack(track) {
   // scId is only a numeric identity; yt-dlp needs the canonical page URL.
-  const key = track.scUrl || track.url || track.scId;
+  const key = scKey(track);
   if (!key) return toast('Нет ссылки на SoundCloud', 'error');
-  if (state.scDownloaded[key]) return toast('Уже скачано', 'info', 2200);
+  if (isScDownloaded(track)) return toast('Уже скачано', 'info', 2200);
   try {
     const res = await request('/sc/download', {
       method: 'POST',
@@ -3512,7 +3605,7 @@ async function showAlbumDetail(albumId) {
       <div class="album-detail-left">
         <button class="btn-back" id="albumBack"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m11 18-6-6 6-6"/></svg>К альбомам</button>
         <div class="album-detail-header">
-          <img src="${data.cover}" alt="" id="albumCoverImg" />
+          <img src="${data.cover}" alt="" id="albumCoverImg" loading="lazy" />
           <div class="album-detail-info">
             <h2>${escapeHtml(data.albumTitle || 'Альбом')}</h2>
             <p>${data.albumArtist ? `<button class="link-artist" id="albumArtistLink">${escapeHtml(data.albumArtist)}</button>` : ''}${data.albumArtist ? ' · ' : ''}${tracks.length} треков</p>
@@ -3562,19 +3655,7 @@ async function showUnifiedAlbumDetail(source, id) {
     let cover = '';
     const al = state.albumResults?.find((a) => a.id === id);
     if (al) { albumTitle = al.title || albumTitle; albumArtist = al.artist || albumArtist; cover = al.cover || cover; }
-    if (source === 'youtube') {
-      const playlistUrl = al?.playlistUrl || '';
-      if (!playlistUrl) throw new Error('Плейлист URL не найден');
-      const data = await request(`/youtube/playlist?url=${encodeURIComponent(playlistUrl)}&count=50`, { timeout: API_TIMEOUT.default });
-      tracks = (data.tracks || []).map((t) => ({
-        ...t,
-        source: 'youtube',
-        videoId: t.videoId,
-      }));
-      albumTitle = data.title || al?.title || 'Альбом';
-      albumArtist = al?.artist || '';
-      cover = al?.cover || data.cover || '';
-    } else if (source === 'soundcloud') {
+    if (source === 'soundcloud') {
       if (al && al._tracks) {
         tracks = al._tracks.map((t) => ({ ...t, source: 'soundcloud', scId: t.id, scUrl: t.url }));
         albumTitle = al.title;
@@ -3598,7 +3679,7 @@ async function showUnifiedAlbumDetail(source, id) {
       <div class="album-detail-left">
         <button class="btn-back" id="albumBack"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m11 18-6-6 6-6"/></svg>К альбомам</button>
         <div class="album-detail-header">
-          <img src="${cover}" alt="" id="albumCoverImg" />
+          <img src="${cover}" alt="" id="albumCoverImg" loading="lazy" />
           <div class="album-detail-info">
             <h2>${escapeHtml(albumTitle)}</h2>
             <p>${albumArtist ? `<button class="link-artist" id="albumArtistLink">${escapeHtml(albumArtist)}</button>` : ''}${albumArtist ? ' · ' : ''}${tracks.length} треков</p>
@@ -3652,15 +3733,7 @@ async function openUnifiedPlaylist(source, id) {
     let cover = '';
     const pl = state.playlistSearchResults?.find((p) => p.id === id);
     if (pl) { playlistTitle = pl.title || playlistTitle; playlistOwner = pl.owner || pl.artist || ''; cover = pl.cover || ''; }
-    if (source === 'youtube') {
-      const url = pl?.url || '';
-      if (!url) throw new Error('Нет URL плейлиста');
-      const data = await request(`/youtube/playlist?url=${encodeURIComponent(url)}&count=50`, { timeout: API_TIMEOUT.default });
-      tracks = (data.tracks || []).map((t) => ({ ...t, source: 'youtube', videoId: t.videoId }));
-      playlistTitle = data.title || pl?.title || 'Плейлист';
-      playlistOwner = pl?.owner || '';
-      cover = pl?.cover || data.cover || '';
-    } else if (source === 'soundcloud') {
+    if (source === 'soundcloud') {
       if (pl && pl._tracks) {
         tracks = pl._tracks.map((t) => ({ ...t, source: 'soundcloud', scId: t.id, scUrl: t.url }));
         playlistTitle = pl.title;
@@ -3684,7 +3757,7 @@ async function openUnifiedPlaylist(source, id) {
       <div class="album-detail-left">
         <button class="btn-back" id="albumBack"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m11 18-6-6 6-6"/></svg>К плейлистам</button>
         <div class="album-detail-header">
-          <img src="${cover}" alt="" id="albumCoverImg" />
+          <img src="${cover}" alt="" id="albumCoverImg" loading="lazy" />
           <div class="album-detail-info">
             <h2>${escapeHtml(playlistTitle)}</h2>
             <p>${playlistOwner ? `<button class="link-artist" id="albumArtistLink">${escapeHtml(playlistOwner)}</button>` : ''}${playlistOwner ? ' · ' : ''}${tracks.length} треков</p>
@@ -3731,7 +3804,7 @@ function cleanArtistScene() {
 function buildArtistBioScene(artist, picture) {
   return `<div class="album-detail-right" id="artistScene">
     <div class="album-bio-backdrop" id="albumBioBackdrop" style="background:radial-gradient(ellipse at 50% 50%, rgba(var(--artist-rgb),.16) 0%, transparent 70%)"></div>
-    ${picture ? `<div class="artist-hero" id="artistHero"><img class="artist-hero-pic" id="artistHeroPic" src="${escapeHtml(picture)}" alt="" onerror="this.closest('.artist-hero').classList.add('no-pic')" /></div>` : ''}
+    ${picture ? `<div class="artist-hero" id="artistHero"><img class="artist-hero-pic" id="artistHeroPic" src="${escapeHtml(picture)}" alt="" loading="lazy" onerror="this.closest('.artist-hero').classList.add('no-pic')" /></div>` : ''}
     <div class="artist-bio-panel" id="artistBioPanel">
       <span class="artist-bio-eyebrow">Об исполнителе</span>
       <h3 class="artist-bio-name" id="artistBioName">${escapeHtml(artist || '')}</h3>
@@ -3946,7 +4019,7 @@ async function playAlbumTrack(track, artistName, albumTracks, idx) {
   try {
     const data = await request(`/sc/search?q=${encodeURIComponent(artistName + ' ' + track.title)}&count=1`, { timeout: API_TIMEOUT.default });
     const found = (data.tracks || [])[0];
-    if (!found) { toast('Трек не найден в Umbrella Search', 'error'); return; }
+    if (!found) { toast('Трек не найден в SoundCloud', 'error'); return; }
     const t = { title: found.title, artist: found.artist, scUrl: found.url, scId: found.id, source: 'soundcloud', thumbnail: found.thumbnail, duration: found.duration || track.duration, album: 'Deezer Альбом', color: '', _keepAlbumOpen: true, _albumRowIndex: idx };
     if (Array.isArray(albumTracks) && albumTracks.length && Number.isInteger(idx)) {
       const queue = albumTracks.map((x, i) => (i === idx ? t : {
@@ -4001,7 +4074,7 @@ async function playAlbumQueue(deezerTracks, artistName) {
       if (status) status.textContent = `Ищем треки: ${i + 1} из ${deezerTracks.length}`;
     }
   }
-  if (!scTracks.length) { loading?.remove(); toast('Не удалось найти треки альбома в Umbrella Search', 'error'); return; }
+  if (!scTracks.length) { loading?.remove(); toast('Не удалось найти треки альбома в SoundCloud', 'error'); return; }
   state.visibleTracks = [...scTracks];
   highlightAlbumTrack(scTracks[0]._albumRowIndex);
   if (loading) {
@@ -4036,13 +4109,13 @@ async function showArtistPage(artist) {
     root.style.setProperty('--artist-r', color.r);
     root.style.setProperty('--artist-g', color.g);
     root.style.setProperty('--artist-b', color.b);
-    // YouTube по имени артиста подмешивает мусор («GREAT PHARAOHS OF EGYPT…»),
+    // По имени артиста поиск подмешивает мусор («GREAT PHARAOHS OF EGYPT…»),
     // поэтому сначала показываем то, где имя реально совпало.
     const scTracksRanked = rankArtistTracks(tracks.map((t) => ({ ...t, source: 'soundcloud', scUrl: t.url, scId: t.id, album: 'SoundCloud' })), artist);
     const listHtml = scTracksRanked.length
       ? scTracksRanked.map((t, i) => `
         <div class="album-detail-row" data-idx="${i}">
-          ${t.thumbnail ? `<img class="yt-thumb-sm" src="${escapeHtml(t.thumbnail)}" alt="" loading="lazy" />` : `<span class="pos">${String(i + 1).padStart(2, '0')}</span>`}
+          ${t.thumbnail ? `<img class="sc-thumb-sm" src="${escapeHtml(t.thumbnail)}" alt="" loading="lazy" />` : `<span class="pos">${String(i + 1).padStart(2, '0')}</span>`}
           <span class="name">${escapeHtml(t.title)}</span>
           <span class="dur">${formatDuration(t.duration)}</span>
         </div>`).join('')
@@ -4054,10 +4127,10 @@ async function showArtistPage(artist) {
       <div class="album-detail-left">
         <button class="btn-back" id="artistBack"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m11 18-6-6 6-6"/></svg>Назад</button>
         <div class="album-detail-header">
-          <img src="${picture}" alt="" id="artistCoverImg" onerror="this.style.display='none'" />
+          <img src="${picture}" alt="" id="artistCoverImg" loading="lazy" onerror="this.style.display='none'" />
           <div class="album-detail-info">
             <h2>${escapeHtml(artist)}</h2>
-            <p>${ytTracks.length} ${plural(ytTracks.length)} на Umbrella Search</p>
+            <p>${scTracksRanked.length} ${plural(scTracksRanked.length)} на SoundCloud</p>
             <div class="artist-actions">
               <button class="btn btn-primary btn-sm" id="artistPlayAll">${icons.play}<span>Слушать все</span></button>
               <button class="btn btn-ghost btn-sm" id="artistRadioBtn"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/></svg><span>Радио</span></button>
@@ -4073,10 +4146,10 @@ async function showArtistPage(artist) {
 
     renderArtistStats(artist);
     $('#artistBack').onclick = closeArtistPage;
-    $('#artistPlayAll').onclick = () => playArtistAll(ytTracks, artist);
+    $('#artistPlayAll').onclick = () => playArtistAll(scTracksRanked, artist);
     $('#artistRadioBtn').onclick = () => { closeArtistPage(); startArtistRadio(artist); };
     detail.querySelectorAll('.album-detail-row').forEach((row) => {
-      row.onclick = () => playArtistTrack(ytTracks[Number(row.dataset.idx)], ytTracks, Number(row.dataset.idx));
+      row.onclick = () => playArtistTrack(scTracksRanked[Number(row.dataset.idx)], scTracksRanked, Number(row.dataset.idx));
     });
     loadArtistBio(artist);
     animateAlbumDetail();
@@ -4095,7 +4168,7 @@ function closeArtistPage() {
 }
 
 /* Наверх — настоящие треки артиста; документалки и часовые миксы вниз.
-   Поле artist у YouTube — это название канала, поэтому главный признак —
+   Поле artist у SoundCloud — это аплоадер, поэтому главный признак —
    имя артиста в НАЧАЛЕ названия («PHARAOH - ДИКО, НАПРИМЕР»). */
 function rankArtistTracks(tracks, artist) {
   const name = (artist || '').trim().toLowerCase();
@@ -4121,7 +4194,7 @@ function rankArtistTracks(tracks, artist) {
 }
 
 function playArtistTrack(track, list, idx) {
-  if (!track || !track.videoId) return;
+  if (!track || (!track.scUrl && !track.scId)) return;
   // Очередь — весь список артиста, иначе «следующий» некуда листать.
   if (Array.isArray(list) && list.length) {
     state.visibleTracks = list;
@@ -4137,27 +4210,6 @@ function playArtistAll(tracks, artist) {
   state.visibleTracks = [...tracks];
   playTrack(tracks[0], 0);
   toast(`Играет: ${artist}`);
-}
-
-/* ============================================================
-   Offline download
-   ============================================================ */
-
-async function downloadOfflineAudio(track) {
-  if (!track.videoId) return toast('Офлайн доступен только для YouTube', 'info');
-  if (!settings.offline) return toast('Офлайн-загрузки отключены в настройках', 'info');
-  const existing = await idbGetOffline(track.videoId);
-  if (existing) return toast('Трек уже скачан', 'info');
-  try {
-    toast('Скачиваем аудио…');
-    const resp = await fetch(`${API}/youtube/stream?videoId=${encodeURIComponent(track.videoId)}`);
-    if (!resp.ok) throw new Error('Ошибка сервера');
-    const blob = await resp.blob();
-    await idbSaveOffline(track.videoId, blob, { title: track.title, artist: track.artist, thumbnail: track.thumbnail });
-    toast('Трек доступен офлайн', 'success');
-  } catch (e) {
-    toast('Ошибка скачивания: ' + e.message, 'error');
-  }
 }
 
 /* ============================================================
@@ -4283,7 +4335,6 @@ async function deleteTrack(id) {
 function listForMode(mode) {
   if (mode === 'search') return state.searchResults;
   if (mode === 'favorites') return favorites.map(favRecordToTrack);
-  if (mode === 'yt') return state.tracks.filter((t) => t.source === 'youtube');
   if (mode === 'scLib') return state.scLibTracks;
   return state.visibleTracks;
 }
@@ -4336,10 +4387,7 @@ document.addEventListener('click', async (e) => {
     const row = dlBtn.closest('.track-row');
     const list = listForMode(row?.dataset.source);
     const track = list[Number(row?.dataset.index)];
-    if (track) {
-      if (track.source === 'soundcloud') downloadSoundcloudTrack(track);
-      else downloadOfflineAudio(track);
-    }
+    if (track) downloadSoundcloudTrack(track);
     return;
   }
   const plBtn = e.target.closest('.track-pl');
@@ -4365,20 +4413,7 @@ document.addEventListener('click', async (e) => {
   const track = list[index];
   if (!track) return;
 
-  if (row.dataset.source === 'search' && track.source === 'youtube') {
-    const exists = state.tracks.some((t) => t.videoId && t.videoId === track.videoId);
-    // Сохраняем в библиотеку ТОЛЬКО если включено автодобавление.
-    let added = false;
-    if (!exists && settings.autoAdd) {
-      const dbId = await idbSaveYouTube(track);
-      state.tracks.unshift({ ...track, id: dbId, dbId });
-      added = true;
-    }
-    // Очередь — результаты поиска, чтобы работало перелистывание.
-    state.visibleTracks = state.searchResults;
-    playTrack(track, index);
-    if (added) { toast('Трек добавлен в библиотеку', 'success'); renderTracks(); }
-  } else if (row.dataset.source === 'favorites') {
+  if (row.dataset.source === 'favorites') {
     state.visibleTracks = favorites.map(favRecordToTrack);
     playTrack(track, index);
   } else if (row.dataset.source === 'search') {
@@ -4419,6 +4454,8 @@ async function launchLocalPlayer() {
       toast(`Загружено треков: ${tracks.length}`, 'success', 2600);
     }
   }).catch(() => {});
+  const deep = location.hash.slice(1);
+  if (deep) switchView(deep);
 }
 
 function setUser(user) {
@@ -6286,7 +6323,6 @@ function wireRecViewer() {
   const ov = $('#recOverlay');
   if (!ov) return;
   $('#recClose')?.addEventListener('click', closeRecordView);
-  $('#recClose')?.addEventListener('pointerup', (e) => { e.stopPropagation(); closeRecordView(); });
   const stage = $('#recStage');
   if (stage) {
     stage.addEventListener('pointerdown', (e) => {
@@ -6361,7 +6397,6 @@ function wireEvents() {
 
   $$('.nav-link').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)));
   $('.brand')?.addEventListener('click', () => { if (state.launched) switchView('library'); });
-  $('.brand')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && state.launched) switchView('library'); });
   $('#profileButton')?.addEventListener('click', () => switchView('settings'));
 
   $('#dashAddTrack')?.addEventListener('click', () => $('#trackFileInput')?.click());
@@ -6376,7 +6411,11 @@ function wireEvents() {
     state.heroExpanded = !state.heroExpanded;
     renderPlaylists();
   });
-  $('#filterInput')?.addEventListener('input', renderTracks);
+  let filterDebounce = null;
+  $('#filterInput')?.addEventListener('input', () => {
+    clearTimeout(filterDebounce);
+    filterDebounce = setTimeout(() => renderTracks(false), 140);
+  });
   $('#sortButton')?.addEventListener('click', () => {
     state.sortNewest = !state.sortNewest;
     const btn = $('#sortButton');
@@ -6474,15 +6513,6 @@ function wireEvents() {
   $('#newPlaylistBtn2')?.addEventListener('click', createPlaylistFlow);
 
   $('#searchButton')?.addEventListener('click', search);
-  $('#ytVerifyClose')?.addEventListener('click', closeYoutubeVerification);
-  $('#ytVerifyRetry')?.addEventListener('click', retryYoutubeVerification);
-  $('#ytVerifyOpen')?.addEventListener('click', () => {
-    const videoId = ytVerifyContext?.track?.videoId;
-    if (videoId) window.open(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`, '_blank', 'noopener');
-  });
-  $('#ytVerify')?.addEventListener('click', (event) => {
-    if (event.target.classList.contains('yt-verify-backdrop')) closeYoutubeVerification();
-  });
   $('#searchInput')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
   $('#playlistAddAll')?.addEventListener('click', addAllPlaylistToQueue);
   $('#searchInput')?.addEventListener('focus', () => {
@@ -6507,7 +6537,6 @@ function wireEvents() {
     const isPl = src === 'playlists';
     const isAlbums = src === 'albums';
     const isSc = src === 'soundcloud';
-    const isYt = src === 'youtube';
     $('#searchInput').placeholder = isPl
       ? 'Название плейлиста или исполнителя…'
       : (isAlbums ? 'Исполнитель для поиска альбомов…' : 'Трек, исполнитель или альбом');
@@ -6558,6 +6587,8 @@ function wireEvents() {
     const del = e.target.closest('[data-scdel]');
     if (del) {
       const path = del.dataset.scdel;
+      const ok = await confirmDialog({ title: 'Удалить файл?', body: 'Файл будет удалён с диска безвозвратно.', confirmText: 'Удалить' });
+      if (!ok) return;
       try {
     const r = await fetch(`${API}/sc/file?path=${encodeURIComponent(path)}`, {
       method: 'DELETE',
@@ -6581,10 +6612,9 @@ function wireEvents() {
     const track = {
       title: record.title, artist: record.artist, source: record.source,
       videoId: record.videoId, scUrl: record.scUrl, scId: record.scId, thumbnail: record.thumbnail, duration: record.duration, color: '',
-      _needsLookup: (!record.scUrl && !record.scId && !record.videoId) || record.source === 'youtube' ? `${record.artist} ${record.title}` : null,
+      _needsLookup: (!record.scUrl && !record.scId) ? `${record.artist} ${record.title}` : null,
       url: record.scUrl,
     };
-    if (track.source === 'youtube') track.source = 'soundcloud';
     if (track.source === 'local') {
       const found = state.tracks.find((t) => t.title === track.title && t.artist === track.artist);
       if (found) track.dbId = found.dbId;
@@ -6639,66 +6669,25 @@ function wireEvents() {
       return;
     }
     
-    // Если это YouTube трек
-    if (track.source === 'youtube' && track.videoId) {
-      // Проверяем, есть ли уже в state.tracks
-      const existing = state.tracks.find(t => t.videoId === track.videoId && t.source === 'youtube');
-      if (existing) {
-        toast('Трек уже в библиотеке', 'info');
-        // Синхронизируем dbId если есть
-        if (existing.dbId && !track.dbId) {
-          state.currentTrack.dbId = existing.dbId;
-          state.currentTrack.id = existing.dbId;
-        }
-        updateLibraryButtonState();
-        return;
-      }
-      
-      try {
-        console.log('[Library] Adding YouTube track:', track.title, track.videoId);
-        const dbId = await idbSaveYouTube(track);
-        const newTrack = { 
-          ...track, 
-          id: dbId, 
-          dbId, 
-          source: 'youtube',
-          album: track.album || '',
-          color: track.color || ''
-        };
-        state.tracks.unshift(newTrack);
-        // Обновляем текущий трек, чтобы он имел dbId
-        state.currentTrack.dbId = dbId;
-        state.currentTrack.id = dbId;
-        console.log('[Library] Track added successfully with dbId:', dbId);
-        updateStats();
-        renderTracks(); // Обновляем список треков
-        updateLibraryButtonState();
-        toast('Трек добавлен в библиотеку', 'success');
-      } catch (e) {
-        console.error('[Library] Failed to add track:', e);
-        toast(`Не удалось добавить трек: ${e.message}`, 'error');
-      }
-      return;
-    }
-    
     // Если трек уже имеет dbId (локальный)
     if (track.dbId) {
       toast('Трек уже в библиотеке', 'info');
       return;
     }
-    
-    // Для других источников (SoundCloud и т.д.)
+
+    // Для других источников (SoundCloud и т.д.) — скачиваем в библиотеку.
     if (track.source === 'soundcloud' || track.previewUrl || track.link) {
-      toast('Этот трек можно добавить только из результатов поиска', 'info');
+      await downloadSoundcloudTrack(track);
+      updateLibraryButtonState();
       return;
     }
-    
+
     toast('Этот трек недоступен для добавления', 'info');
   });
   $('#npLyrics')?.addEventListener('click', openLyrics);
   $('#npRadio')?.addEventListener('click', () => {
     if (state.radioMode) { stopRadio(); toast('Радио-режим выключен'); return; }
-    if (!state.currentTrack || !state.currentTrack.videoId) { toast('Сначала включите YouTube-трек', 'info'); return; }
+    if (!state.currentTrack || (!state.currentTrack.scUrl && !state.currentTrack.scId)) { toast('Сначала включите трек из SoundCloud', 'info'); return; }
     state.radioMode = true;
     state.radioKind = 'related';
     state.radioPlayedIds = new Set();
@@ -6995,7 +6984,7 @@ function wireEvents() {
 
   // Infinite mix
   $('#infBanner')?.addEventListener('click', () => { window.location.href = '/eternalbox.html'; });
-  $('#infBanner')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') window.location.href = '/eternalbox.html'; });
+  $('#infBanner')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = '/eternalbox.html'; } });
 
   // Lyrics overlay
   $('#lyricsClose')?.addEventListener('click', closeLyrics);
@@ -7026,6 +7015,7 @@ function wireEvents() {
     ['#setVisualizer', 'visualizer'],
     ['#setLed', 'led'],
     ['#setAmbient', 'ambient'],
+    ['#setLowFx', 'lowFx'],
     ['#setKeepVolume', 'keepVolume'],
     ['#setAutoAdd', 'autoAdd'],
     ['#setOffline', 'offline'],

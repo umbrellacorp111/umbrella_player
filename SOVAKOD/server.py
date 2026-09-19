@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gzip
 import hashlib
+import io
 import itertools
 import json
 import logging
@@ -48,7 +50,6 @@ from config import (
     STREAM_CHUNK_SIZE,
     WIKIDATA_BASE,
     WIKIMEDIA_BASE,
-    YT_BASE,
 )
 
 ROOT = Path(os.getenv("APP_ROOT", str(Path(__file__).resolve().parent)))
@@ -134,37 +135,26 @@ from config import (
     MAX_ARTIST_IMAGE_BYTES,
     MAX_CACHE_ENTRIES,
     MAX_JSON_BODY,
-    RELATED_IDS_TTL,
     SC_DOWNLOAD_QUEUE_SIZE,
     SC_DOWNLOAD_WORKERS,
     SC_JOB_TTL,
     SC_URL_TTL,
     WIKI_PAGE_TTL,
-    YT_BLOCK_COOLDOWN,
-    YT_DLP_CONCURRENCY,
-    YT_FILE_TTL,
-    YT_URL_TTL,
+    YDL_CONCURRENCY,
     ZVUK_SEARCH_TTL,
     ZVUK_URL_TTL,
 )
 
 _force_utf8_stdio()
-YT_URL_CACHE: dict[str, tuple[str, float]] = {}
-YT_EXTRACT_LOCK = threading.Lock()
-YT_BLOCKED_UNTIL = 0.0
-YT_SEARCH_VALIDATE = os.getenv("UMBRELLA_VALIDATE_SEARCH", "0").strip() not in ("0", "false", "False", "")
 CACHE_LOCK = threading.RLock()
 MB_LAST_REQUEST = 0.0
 MB_LOCK = threading.Lock()
-YT_URL_CACHE_LOCK = threading.Lock()
 LYRICS_CACHE_LOCK = threading.Lock()
 LYRICS_CACHE: dict[str, dict] = {}
 AUDIO_FILE_CACHE: dict[str, tuple[str, float]] = {}
-YT_FILE_CACHE: dict[str, tuple[str, float]] = {}
 ARTIST_IMG_CACHE: dict[str, tuple[bytes, str, float]] = {}
 ARTIST_BIO_CACHE: dict[str, tuple[float, dict]] = {}
 WIKI_PAGE_CACHE: dict[str, tuple[float, dict]] = {}
-RELATED_IDS_CACHE: dict[str, tuple[list[str], float]] = {}
 # Папка рядом с .exe (или со скриптом) — сюда кладётся artist_overrides.json,
 # который можно править без пересборки.
 _ENV_DATA_DIR = os.getenv("APP_DATA_DIR", "").strip()
@@ -181,7 +171,6 @@ try:
 except OSError:
     pass
 ARTIST_OVERRIDES_PATH = APP_DATA_DIR / "artist_overrides.json"
-YT_CACHE_DIR = APP_DATA_DIR / "_yt_cache"
 ARTIST_OVERRIDES_CACHE: dict[str, object] = {"mtime": 0.0, "data": {}}
 log = logging.getLogger("umbrella")
 try:
@@ -192,24 +181,11 @@ try:
 except OSError:  # pragma: no cover
     pass
 log.info("Server import OK: root=%s data_dir=%s", ROOT, APP_DATA_DIR)
-try:
-    _b64 = os.getenv("YT_COOKIES_B64", "").strip()
-    _raw = os.getenv("YT_COOKIES_CONTENT", "").strip()
-    _target = APP_DATA_DIR / "cookies.txt"
-    if _b64 and not _target.is_file():
-        import base64
-        _target.write_bytes(base64.b64decode(_b64))
-        log.info("Wrote cookies.txt from YT_COOKIES_B64 (%d bytes)", _target.stat().st_size)
-    elif _raw and not _target.is_file():
-        _target.write_text(_raw, encoding="utf-8")
-        log.info("Wrote cookies.txt from YT_COOKIES_CONTENT")
-except Exception as _e:
-    log.warning("Failed to write cookies from env: %s", _e)
 
 # ---- SoundCloud-подсистема (через yt-dlp: поиск scsearch + прямая загрузка) ----
 SC_DIR = APP_DATA_DIR / "sc_music"
 SC_CACHE_DIR = APP_DATA_DIR / "_sc_cache"
-SC_URL_CACHE: dict[str, tuple[str, str, float]] = {}  # track_url -> (audio_url, kind, ts)
+SC_URL_CACHE: dict[str, tuple] = {}  # track_url -> (audio_url, kind, ts, title, duration)
 SC_JOB_SEQ = itertools.count(1)
 SC_JOBS: dict[str, dict] = {}
 SC_STREAM_LOCKS: dict[str, threading.Lock] = {}
@@ -229,7 +205,7 @@ ZVUK_CLIENT_LOCK = threading.Lock()
 ZVUK_CLIENT: object | None = None
 ZVUK_ANON_TOKEN: str | None = None
 API_TOKEN = secrets.token_urlsafe(32)
-YT_DLP_LIMIT = threading.BoundedSemaphore(YT_DLP_CONCURRENCY)
+YDL_LIMIT = threading.BoundedSemaphore(YDL_CONCURRENCY)
 EXTERNAL_API_LIMIT = threading.BoundedSemaphore(EXTERNAL_API_CONCURRENCY)
 SC_DOWNLOAD_QUEUE: queue.Queue[dict | None] = queue.Queue(maxsize=SC_DOWNLOAD_QUEUE_SIZE)
 SERVER_STOPPING = threading.Event()
@@ -240,14 +216,14 @@ class ServiceBusyError(RuntimeError):
 
 
 @contextmanager
-def _limited_youtube_dl(options: dict):
-    if SERVER_STOPPING.is_set() or not YT_DLP_LIMIT.acquire(timeout=0.75):
+def _limited_ydl(options: dict, timeout: float = 0.75):
+    if SERVER_STOPPING.is_set() or not YDL_LIMIT.acquire(timeout=timeout):
         raise ServiceBusyError("Сервис занят, повторите через несколько секунд")
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
             yield ydl
     finally:
-        YT_DLP_LIMIT.release()
+        YDL_LIMIT.release()
 
 
 @contextmanager
@@ -292,36 +268,6 @@ def _mb_rate_limit() -> None:
         MB_LAST_REQUEST = time.time()
 
 
-def _yt_cookies_options() -> dict:
-    def _writable_copy(src: Path) -> str:
-        try:
-            dst = APP_DATA_DIR / "cookies.txt"
-            if str(src).startswith("/etc/secrets"):
-                import shutil
-                shutil.copyfile(src, dst)
-                try:
-                    os.chmod(dst, 0o600)
-                except OSError:
-                    pass
-                return str(dst)
-            return str(src)
-        except OSError as e:
-            log.warning("Failed to copy cookies %s -> %s: %s", src, APP_DATA_DIR, e)
-            return str(src)
-    candidates = [APP_DATA_DIR / n for n in ("cookies.txt", "youtube_cookies.txt", "cookies_youtube.txt")]
-    candidates += [Path("/etc/secrets/cookies.txt"), Path("/etc/secrets/youtube_cookies.txt")]
-    for p in candidates:
-        if p.is_file() and p.stat().st_size > 0:
-            wp = _writable_copy(p)
-            log.info("Using cookies file: %s -> %s (%d bytes)", p, wp, p.stat().st_size)
-            return {"cookiefile": wp}
-    env_cookie = os.getenv("YT_COOKIES_FILE", "").strip()
-    if env_cookie and Path(env_cookie).is_file():
-        wp = _writable_copy(Path(env_cookie))
-        log.info("Using cookies file from env: %s -> %s", env_cookie, wp)
-        return {"cookiefile": wp}
-    log.warning("No cookies file found (checked %s)", ", ".join(str(c) for c in candidates))
-    return {}
 
 
 def _cleanup_caches() -> None:
@@ -329,17 +275,17 @@ def _cleanup_caches() -> None:
         time.sleep(CACHE_CLEANUP_INTERVAL)
         now = time.time()
         for cache, ttl, timestamp_index in (
-            (YT_URL_CACHE, YT_URL_TTL, 1), (LYRICS_CACHE, LYRICS_TTL, 0),
-            (AUDIO_FILE_CACHE, AUDIO_FILE_TTL, 1), (YT_FILE_CACHE, YT_FILE_TTL, 1),
+            (LYRICS_CACHE, LYRICS_TTL, 0),
+            (AUDIO_FILE_CACHE, AUDIO_FILE_TTL, 1),
             (ARTIST_IMG_CACHE, ARTIST_IMG_TTL, 2), (ARTIST_BIO_CACHE, ARTIST_BIO_TTL, 0),
-            (WIKI_PAGE_CACHE, WIKI_PAGE_TTL, 0), (RELATED_IDS_CACHE, RELATED_IDS_TTL, 1),
+            (WIKI_PAGE_CACHE, WIKI_PAGE_TTL, 0),
             (SC_URL_CACHE, SC_URL_TTL, 2), (ZVUK_URL_CACHE, ZVUK_URL_TTL, 1),
             (ZVUK_SEARCH_CACHE, ZVUK_SEARCH_TTL, 1),
         ):
             for key, value in list(cache.items()):
                 timestamp = _cache_timestamp(value, timestamp_index)
                 if timestamp and now - timestamp >= ttl:
-                    if cache is AUDIO_FILE_CACHE or cache is YT_FILE_CACHE:
+                    if cache is AUDIO_FILE_CACHE:
                         try:
                             path = value[0] if isinstance(value, tuple) else ""
                             if path and os.path.isfile(path):
@@ -353,7 +299,7 @@ def _cleanup_caches() -> None:
                 if job.get("finished") and now - job["finished"] > SC_JOB_TTL:
                     SC_JOBS.pop(key, None)
         try:
-            for cache_dir, ttl in ((YT_CACHE_DIR, YT_FILE_TTL), (SC_CACHE_DIR, AUDIO_FILE_TTL)):
+            for cache_dir, ttl in ((SC_CACHE_DIR, AUDIO_FILE_TTL),):
                 if not cache_dir.is_dir():
                     continue
                 for p in cache_dir.iterdir():
@@ -369,17 +315,6 @@ def _cleanup_caches() -> None:
 threading.Thread(target=_cleanup_caches, daemon=True, name="cache-cleanup").start()
 
 
-def _snapshot_files(directory: Path) -> set[str]:
-    if not directory.is_dir():
-        return set()
-    try:
-        return {
-            str(p.resolve())
-            for p in directory.rglob("*")
-            if p.is_file() and p.suffix.lower() in (".mp3", ".flac", ".m4a", ".mp4", ".ogg", ".opus")
-        }
-    except OSError:
-        return set()
 
 
 def _sc_stream_lock(key: str) -> threading.Lock:
@@ -403,7 +338,7 @@ def _sc_download_file(url: str, outtmpl: str) -> str | None:
         "noplaylist": True,
         "outtmpl": outtmpl,
     }
-    with _limited_youtube_dl(ydl_opts) as ydl:
+    with _limited_ydl(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
     req = info.get("requested_downloads") or []
     if req and req[0].get("filepath") and os.path.exists(req[0]["filepath"]):
@@ -568,6 +503,76 @@ def _proxy_stream(handler: SimpleHTTPRequestHandler, upstream, content_type: str
         handler.wfile.flush()
 
 
+def _sc_extract_audio_url(page_url: str, fresh: bool = False) -> tuple[str, str, str, int]:
+    """Извлекает прямой аудиопоток страницы SoundCloud без скачивания.
+
+    Возвращает (audio_url, kind, title, duration), где kind 'http' —
+    progressive-URL (можно отдавать 302 редиректом), 'hls' — только HLS
+    (нужен download-фолбэк). Результат кэшируется в SC_URL_CACHE.
+    fresh=True пропускает кэш: нужен при повторе, т.к. подписанные URL
+    SoundCloud протухают (~10 мин) раньше, чем истекает TTL кэша."""
+    now = time.time()
+    if not fresh:
+        cached = SC_URL_CACHE.get(page_url)
+        if cached and (now - cached[2]) < SC_URL_TTL:
+            return cached[0], cached[1], cached[3], cached[4]
+    ydl_opts = {
+        "format": "http_mp3_1_0/http_mp3/bestaudio[protocol^=http]/bestaudio",
+        "quiet": True,
+        "no_warnings": True,
+        "socket_timeout": 20,
+        "noplaylist": True,
+    }
+    with _limited_ydl(ydl_opts) as ydl:
+        info = ydl.extract_info(page_url, download=False)
+    audio_url = info.get("url") or ""
+    if not audio_url:
+        for fmt in info.get("formats", []):
+            if fmt.get("acodec") != "none" and fmt.get("url"):
+                audio_url = fmt["url"]
+                break
+    if not audio_url:
+        raise RuntimeError("Не удалось извлечь аудиопоток")
+    proto = (info.get("protocol") or "").lower()
+    kind = "hls" if ("m3u8" in proto or "hls" in proto) else "http"
+    title = info.get("title", "")
+    duration = info.get("duration") or 0
+    SC_URL_CACHE[page_url] = (audio_url, kind, now, title, duration)
+    _trim_cache(SC_URL_CACHE, 2)
+    return audio_url, kind, title, duration
+
+
+def _sc_search_tracks(text: str, count: int = 15) -> list[dict]:
+    """Плоский поиск SoundCloud через yt-dlp (scsearch). Возвращает
+    список {id, url, title, artist, thumbnail, duration}."""
+    count = min(max(count, 1), 50)
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "socket_timeout": 20,
+        "extract_flat": True,
+        "default_search": "scsearch",
+    }
+    with _limited_ydl(ydl_opts) as ydl:
+        result = ydl.extract_info(f"scsearch{count}:{text}", download=False)
+    items = []
+    for entry in (result.get("entries") or [])[:count]:
+        if not isinstance(entry, dict):
+            continue
+        url = entry.get("webpage_url") or entry.get("url") or ""
+        if not url:
+            continue
+        items.append({
+            "id": str(entry.get("id", "")),
+            "url": url,
+            "title": entry.get("title", "") or "",
+            "artist": entry.get("uploader") or entry.get("channel") or "",
+            "thumbnail": _best_thumbnail(entry.get("thumbnails") or []),
+            "duration": entry.get("duration") or 0,
+        })
+    return items
+
+
 class AppHandler(SimpleHTTPRequestHandler):
     server_version = SERVER_VERSION
 
@@ -585,14 +590,45 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
+    _GZIP_EXTS = {".html", ".css", ".js", ".json", ".svg", ".txt", ".md"}
+    _GZIP_MIN_BYTES = 1024
+    _GZIP_CACHE: dict[tuple[str, float, int], bytes] = {}
+
+    def send_head(self):
+        if self.command == "GET" and not self.headers.get("Range"):
+            if "gzip" in (self.headers.get("Accept-Encoding") or ""):
+                try:
+                    path = self.translate_path(self.path)
+                except Exception:
+                    path = ""
+                if path and not os.path.isdir(path):
+                    ext = os.path.splitext(path)[1].lower()
+                    if ext in self._GZIP_EXTS:
+                        try:
+                            st = os.stat(path)
+                            if st.st_size >= self._GZIP_MIN_BYTES:
+                                key = (path, st.st_mtime, st.st_size)
+                                data = self._GZIP_CACHE.get(key)
+                                if data is None:
+                                    with open(path, "rb") as f:
+                                        data = gzip.compress(f.read(), compresslevel=6)
+                                    if len(self._GZIP_CACHE) > 64:
+                                        self._GZIP_CACHE.clear()
+                                    self._GZIP_CACHE[key] = data
+                                self.send_response(200)
+                                self.send_header("Content-Type", self.guess_type(path))
+                                self.send_header("Content-Encoding", "gzip")
+                                self.send_header("Content-Length", str(len(data)))
+                                self.send_header("Accept-Ranges", "none")
+                                self.end_headers()
+                                return io.BytesIO(data)
+                        except OSError:
+                            pass
+        return super().send_head()
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         route = parsed.path
-        if route.startswith("/youtube/") and not route.startswith("/api/"):
-            route = "/api" + route
-        if route in ("/api/youtube/search", "/api/youtube/proxy", "/api/youtube/stream", "/api/youtube/related", "/api/youtube/playlist"):
-            self.send_json({"error": "Источник отключен — используется только Umbrella Search"}, HTTPStatus.GONE)
-            return
         if route == "/api/archaeo/related":
             self.handle_archaeo_related(parse_qs(parsed.query))
             return
@@ -610,9 +646,6 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if route == "/api/artist/bio":
             self.handle_artist_bio(parse_qs(parsed.query))
-            return
-        if route in ("/api/youtube/stream", "/api/music/stream"):
-            self.send_json({"error": "Источник отключен — используется только Umbrella Search"}, HTTPStatus.GONE)
             return
         if route == "/api/sc/search":
             self.handle_sc_search(parse_qs(parsed.query))
@@ -689,204 +722,10 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.send_json({"error": "Требуется авторизация"}, HTTPStatus.FORBIDDEN)
         return False
 
-    def handle_youtube_search(self, query: dict[str, list[str]]) -> None:
-        text = query.get("q", [""])[0].strip()
-        if not text:
-            self.send_json({"error": "Пустой поисковый запрос"}, HTTPStatus.BAD_REQUEST)
-            return
-        if yt_dlp is None:
-            self.send_json({"error": "yt-dlp не установлен"}, HTTPStatus.SERVICE_UNAVAILABLE)
-            return
-        try:
-            count = min(max(int(query.get("count", ["15"])[0]), 1), 50)
-        except ValueError:
-            count = 15
-        search_type = query.get("type", ["track"])[0].strip()
-        try:
-            if search_type == "playlist":
-                # Поиск плейлистов через фильтр «Playlist» на странице результатов.
-                # ytsearchN:... playlist не отдаёт плейлисты; sp=EgIQAw%253D%253D
-                # включает фильтр Playlist, и yt-dlp возвращает реальные плейлисты.
-                search_url = (
-                    "https://www.youtube.com/results?"
-                    + urlencode({"search_query": text})
-                    + "&sp=EgIQAw%253D%253D"
-                )
-                ydl_opts = {
-                    "quiet": True, "no_warnings": True, "socket_timeout": 25,
-                    "extract_flat": True,
-                }
-                seen = set()
-                playlists = []
-                with _limited_youtube_dl(ydl_opts) as ydl:
-                    result = ydl.extract_info(search_url, download=False)
-                for entry in (result.get("entries") or []):
-                    entry_url = entry.get("url", "")
-                    pl_id = entry.get("id", "")
-                    is_playlist = (
-                        entry_url.startswith("https://www.youtube.com/playlist")
-                        or "youtube.com/playlist?list=" in entry_url
-                        or str(pl_id).startswith("PL")
-                        or str(pl_id).startswith("OL")
-                    )
-                    if not is_playlist or not pl_id or pl_id in seen:
-                        continue
-                    seen.add(pl_id)
-                    playlists.append({
-                        "id": pl_id,
-                        "title": entry.get("title", ""),
-                        "channel": entry.get("channel", "") or entry.get("uploader", ""),
-                        "thumbnail": _best_thumbnail(entry.get("thumbnails") or []),
-                        "videoCount": entry.get("playlist_count") or entry.get("video_count") or 0,
-                        "url": entry_url,
-                    })
-                    if len(playlists) >= count:
-                        break
-                self.send_json({"playlists": playlists})
-                return
-            ydl_opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "socket_timeout": 15,
-                "extract_flat": True,
-                "default_search": "ytsearch",
-            }
-            with _limited_youtube_dl(ydl_opts) as ydl:
-                result = ydl.extract_info(f"ytsearch{count}:{text}", download=False)
-            items = []
-            for entry in (result.get("entries") or []):
-                video_id = entry.get("id", "")
-                entry_url = entry.get("url", "") or entry.get("webpage_url", "")
-                # ytsearch иногда ставит первым канал исполнителя. Он не имеет
-                # аудиопотока, но раньше попадал в UI как обычный трек.
-                if not re.fullmatch(r"[A-Za-z0-9_-]{11}", str(video_id)):
-                    continue
-                if entry_url and "youtube.com/channel/" in entry_url:
-                    continue
-                duration = entry.get("duration") or 0
-                # Плеер ищет треки, а не часовые ролики и документальные фильмы.
-                # Длинные DJ-сеты не скрываем полностью: граница оставляет
-                # обычные extended-версии, но убирает типичные видео-эссе.
-                if duration and duration > 20 * 60:
-                    continue
-                title = entry.get("title", "") or ""
-                channel = entry.get("channel", "") or entry.get("uploader", "") or ""
-                search_text = f"{title} {channel}".lower()
-                non_music_marks = (
-                    "documentary", "interview", "podcast", "reaction", "review",
-                    "explained", "history of", "tutorial", "news", "trailer",
-                    "behind the scenes", "making of", "live stream", "livestream",
-                    "документальный", "интервью", "обзор", "реакция", "история",
-                    "подкаст", "новости", "трейлер", "разбор",
-                )
-                if any(mark in search_text for mark in non_music_marks):
-                    continue
-                # Ставим официальные аудиоверсии выше клипов, но не скрываем
-                # клипы: у части артистов они остаются единственной версией.
-                audio_score = 0
-                if any(mark in search_text for mark in (
-                    "official audio", "audio only", "topic", "provided to youtube",
-                    "visualizer", "lyrics", "lyric video", "audio",
-                )):
-                    audio_score += 20
-                if any(mark in search_text for mark in (
-                    "official music video", "music video", "official video", "[mv]",
-                )):
-                    audio_score -= 8
-                items.append({
-                    "videoId": video_id,
-                    "title": title,
-                    "artist": channel,
-                    "thumbnail": _best_thumbnail(entry.get("thumbnails") or []),
-                    "duration": duration,
-                    "_audio_score": audio_score,
-                })
-            items.sort(key=lambda item: item.get("_audio_score", 0), reverse=True)
-
-            if YT_SEARCH_VALIDATE and items and time.time() >= YT_BLOCKED_UNTIL:
-                candidates = items[:min(len(items), max(count + 4, 8))]
-
-                def _probe(item: dict) -> str | None:
-                    try:
-                        audio_url, _ = self._yt_extract_audio_url(item["videoId"])
-                        return item["videoId"] if audio_url else None
-                    except Exception as error:
-                        message = str(error).lower()
-                        if "login_required" in message or "not a bot" in message or "sign in" in message:
-                            raise RuntimeError("bot_block")
-                        return None
-
-                supported_ids: set[str] = set()
-                bot_blocked = False
-                with ThreadPoolExecutor(max_workers=3) as pool:
-                    futures = {pool.submit(_probe, it): it for it in candidates}
-                    for fut in as_completed(futures):
-                        try:
-                            vid = fut.result()
-                            if vid:
-                                supported_ids.add(vid)
-                        except RuntimeError as e:
-                            if str(e) == "bot_block":
-                                bot_blocked = True
-                                for f in futures:
-                                    f.cancel()
-                                break
-                        except Exception:
-                            pass
-                if bot_blocked:
-                    log.warning("YouTube bot-check during search validation — returning unfiltered results")
-                    supported_ids = {it["videoId"] for it in items}
-                elif supported_ids:
-                    items = [it for it in items if it["videoId"] in supported_ids]
-            tracks = []
-            for item in items:
-                item.pop("_audio_score", None)
-                tracks.append(item)
-                if len(tracks) >= count:
-                    break
-            self.send_json({"tracks": tracks})
-        except Exception as error:
-            self.send_json({"error": f"Ошибка поиска YouTube: {error}"}, HTTPStatus.BAD_GATEWAY)
-
-    def _youtube_related_entries(self, video_id: str, limit: int = 10) -> list[dict]:
-        ydl_opts = {
-            "quiet": True, "no_warnings": True, "socket_timeout": 15,
-            "extract_flat": True, "default_search": "scsearch",
-        }
-        try:
-            with _limited_youtube_dl(ydl_opts) as ydl:
-                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-            tags = info.get("tags") or []
-            channel = info.get("channel") or info.get("uploader") or ""
-            title_words = (info.get("title") or "").split()
-            query_parts = tags[:3] if tags else title_words[:4]
-            if channel:
-                query_parts.append(channel)
-            search_q = " ".join(query_parts) if query_parts else video_id
-        except Exception:
-            search_q = video_id
-        with _limited_youtube_dl(ydl_opts) as ydl:
-            result = ydl.extract_info(f"scsearch{limit}:{search_q}", download=False)
-        return (result.get("entries") or [])[:limit]
-
-    def _related_ids(self, video_id: str, limit: int = 10) -> list[str]:
-        now = time.time()
-        hit = RELATED_IDS_CACHE.get(video_id)
-        if hit and now - hit[1] < RELATED_IDS_TTL:
-            return hit[0]
-        try:
-            entries = self._youtube_related_entries(video_id, limit)
-            ids = [e.get("id", "") for e in entries if e.get("id") and e.get("id") != video_id]
-        except Exception:
-            ids = []
-        RELATED_IDS_CACHE[video_id] = (ids, now)
-        return ids
-
     def handle_archaeo_related(self, query: dict[str, list[str]]) -> None:
-        raw = query.get("ids", [""])[0]
-        ids = [i.strip() for i in raw.split(",") if i.strip()][:30]
-        if not ids:
-            self.send_json({"error": "ids обязательны"}, HTTPStatus.BAD_REQUEST)
+        seeds = [s.strip() for s in query.get("s", []) if s.strip()][:10]
+        if not seeds:
+            self.send_json({"error": "Нужен хотя бы один сид s=«артист — трек»"}, HTTPStatus.BAD_REQUEST)
             return
         if yt_dlp is None:
             self.send_json({"error": "yt-dlp не установлен"}, HTTPStatus.SERVICE_UNAVAILABLE)
@@ -895,203 +734,34 @@ class AppHandler(SimpleHTTPRequestHandler):
             limit = min(max(int(query.get("limit", ["10"])[0]), 3), 15)
         except ValueError:
             limit = 10
-        result: dict[str, list[str]] = {}
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = {pool.submit(self._related_ids, vid, limit): vid for vid in ids}
-            for fut in as_completed(futures):
-                vid = futures[fut]
-                try:
-                    result[vid] = fut.result()
-                except Exception:
-                    result[vid] = []
-        self.send_json({"map": result})
 
-    def handle_youtube_related(self, query: dict[str, list[str]]) -> None:
-        video_id = query.get("videoId", [""])[0].strip()
-        if not video_id:
-            self.send_json({"error": "videoId обязателен"}, HTTPStatus.BAD_REQUEST)
-            return
-        if yt_dlp is None:
-            self.send_json({"error": "yt-dlp не установлен"}, HTTPStatus.SERVICE_UNAVAILABLE)
-            return
-        try:
-            items = []
-            for entry in self._youtube_related_entries(video_id, 10):
-                eid = entry.get("id", "")
-                if eid == video_id:
-                    continue
-                items.append({
-                    "videoId": eid,
-                    "title": entry.get("title", ""),
-                    "artist": entry.get("channel", "") or entry.get("uploader", ""),
-                    "thumbnail": _best_thumbnail(entry.get("thumbnails") or []),
-                    "duration": entry.get("duration") or 0,
-                })
-            self.send_json({"tracks": items})
-        except Exception as error:
-            self.send_json({"error": f"Ошибка поиска похожих: {error}"}, HTTPStatus.BAD_GATEWAY)
-
-    def handle_youtube_playlist(self, query: dict[str, list[str]]) -> None:
-        url = query.get("url", [""])[0].strip()
-        if not url:
-            self.send_json({"error": "Ссылка на плейлист обязательна"}, HTTPStatus.BAD_REQUEST)
-            return
-        if "list=" not in url and "/playlist?" not in url:
-            self.send_json({"error": "Это не ссылка на плейлист"}, HTTPStatus.BAD_REQUEST)
-            return
-        if yt_dlp is None:
-            self.send_json({"error": "yt-dlp не установлен"}, HTTPStatus.SERVICE_UNAVAILABLE)
-            return
-        try:
-            count = min(max(int(query.get("count", ["50"])[0]), 1), 100)
-        except ValueError:
-            count = 50
-        try:
-            ydl_opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "socket_timeout": 20,
-                "extract_flat": True,
-                "noplaylist": False,
-            }
-            with _limited_youtube_dl(ydl_opts) as ydl:
-                result = ydl.extract_info(url, download=False)
-            entries = result.get("entries") or []
-            items = []
-            for entry in entries[:count]:
-                if not isinstance(entry, dict):
-                    continue
-                eid = entry.get("id", "")
-                if not eid:
-                    continue
-                items.append({
-                    "videoId": eid,
-                    "title": entry.get("title", "") or "",
-                    "artist": entry.get("channel", "") or entry.get("uploader", "") or "",
-                    "thumbnail": _best_thumbnail(entry.get("thumbnails") or []),
-                    "duration": entry.get("duration") or 0,
-                })
-            self.send_json({"title": result.get("title") or "Плейлист", "tracks": items})
-        except Exception as error:
-            self.send_json({"error": f"Ошибка загрузки плейлиста: {error}"}, HTTPStatus.BAD_GATEWAY)
-
-    def _yt_extract_audio_url(self, video_id: str, player_client: str = "android_vr") -> tuple[str, int]:
-        global YT_BLOCKED_UNTIL
-        now = time.time()
-        if now < YT_BLOCKED_UNTIL:
-            raise RuntimeError("YouTube временно ограничил запросы с этого IP")
-        cache_key = f"{video_id}:{player_client}"
-        cached = YT_URL_CACHE.get(cache_key)
-        if cached and (now - cached[1]) < YT_URL_TTL:
-            return cached[0], 0
-        ydl_opts = {
-            "format": (
-                "bestaudio[ext=m4a][acodec^=mp4a]/bestaudio[ext=webm]/18/best"
-                if player_client == "android_vr" else "18/best[ext=mp4][acodec^=mp4a]/bestaudio"
-            ),
-            "extractor_args": {
-                "youtube": {
-                    "player_client": [player_client] if not _yt_cookies_options() else ["web"],
-                },
-            },
-            "quiet": True,
-            "no_warnings": True,
-            "socket_timeout": 20,
-            "http_headers": {
-                "User-Agent": DEFAULT_UA,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-us,en;q=0.5",
-                "Sec-Fetch-Mode": "navigate",
-            },
-            **_yt_cookies_options(),
-        }
-        try:
-            with YT_EXTRACT_LOCK:
-                with _limited_youtube_dl(ydl_opts) as ydl:
-                    info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-                audio_url = info.get("url")
-                audio_only = info.get("vcodec") == "none"
-                compatible_container = info.get("ext") in ("m4a", "mp4", "webm", "ogg", "opus")
-                compatible_codec = str(info.get("acodec") or "") not in ("", "none")
-                if not compatible_container or not compatible_codec or (not audio_only and info.get("ext") not in ("m4a", "mp4")):
-                    audio_url = ""
-                duration = info.get("duration") or 0
-            if audio_url:
-                with YT_URL_CACHE_LOCK:
-                    YT_URL_CACHE[cache_key] = (audio_url, now)
-            return audio_url or "", duration
-        except Exception as e:
-            log.error("Failed to extract audio URL for %s: %s", video_id, e)
-            message = str(e).lower()
-            if "login_required" in message or "not a bot" in message or "sign in" in message:
-                with YT_URL_CACHE_LOCK:
-                    YT_BLOCKED_UNTIL = time.time() + YT_BLOCK_COOLDOWN
-                log.warning("YouTube bot-check triggered, cooldown %ss", YT_BLOCK_COOLDOWN)
-            with YT_URL_CACHE_LOCK:
-                YT_URL_CACHE.pop(cache_key, None)
-            raise
-
-    def _youtube_cached_file(self, video_id: str) -> str | None:
-        """Keep a local copy for cases where a signed YouTube URL returns 403."""
-        cached = YT_FILE_CACHE.get(video_id)
-        if cached and os.path.isfile(cached[0]) and time.time() - cached[1] < YT_FILE_TTL:
-            return cached[0]
-        try:
-            YT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            return None
-        key = hashlib.sha1(video_id.encode("utf-8")).hexdigest()
-        outtmpl = str(YT_CACHE_DIR / f"{key}.%(ext)s")
-        with _sc_stream_lock(f"yt:{video_id}"):
-            cached = YT_FILE_CACHE.get(video_id)
-            if cached and os.path.isfile(cached[0]) and time.time() - cached[1] < YT_FILE_TTL:
-                return cached[0]
-            existing = sorted(
-                YT_CACHE_DIR.glob(f"{key}.*"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            if existing:
-                path = str(existing[0])
-                YT_FILE_CACHE[video_id] = (path, time.time())
-                return path
+        def _related(seed: str) -> list[dict]:
             try:
-                with _limited_youtube_dl({
-                    "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/18/best",
-                    "quiet": True,
-                    "no_warnings": True,
-                    "socket_timeout": 30,
-                    "noplaylist": True,
-                    "outtmpl": outtmpl,
-                    **_yt_cookies_options(),
-                }) as ydl:
-                    ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
-            except Exception as error:
-                log.warning("YouTube local fallback failed for %s: %s", video_id, error)
-                return None
-            files = sorted(YT_CACHE_DIR.glob(f"{key}.*"), key=lambda p: p.stat().st_mtime, reverse=True)
-            if not files:
-                return None
-            path = str(files[0])
-            YT_FILE_CACHE[video_id] = (path, time.time())
-            return path
+                found = _sc_search_tracks(seed, limit + 4)
+            except Exception:
+                return []
+            out = []
+            seen = set()
+            for t in found:
+                key = f"{(t.get('title') or '').strip().lower()}|{(t.get('artist') or '').strip().lower()}"
+                if not key.strip('|') or key in seen:
+                    continue
+                seen.add(key)
+                out.append({"key": key, "url": t.get("url", "")})
+                if len(out) >= limit:
+                    break
+            return out
 
-    def handle_youtube_proxy(self, query: dict[str, list[str]]) -> None:
-        video_id = query.get("videoId", [""])[0].strip()
-        if not video_id:
-            self.send_json({"error": "videoId обязателен"}, HTTPStatus.BAD_REQUEST)
-            return
-        if yt_dlp is None:
-            self.send_json({"error": "yt-dlp не установлен"}, HTTPStatus.SERVICE_UNAVAILABLE)
-            return
-        try:
-            audio_url, duration = self._yt_extract_audio_url(video_id)
-            if not audio_url:
-                self.send_json({"error": "Не удалось извлечь аудио"}, HTTPStatus.NOT_FOUND)
-                return
-            self.send_json({"url": audio_url, "duration": duration})
-        except Exception as error:
-            self.send_json({"error": f"Ошибка извлечения аудио: {error}"}, HTTPStatus.BAD_GATEWAY)
+        result: dict[str, list[dict]] = {}
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {pool.submit(_related, s): s for s in seeds}
+            for fut in as_completed(futures):
+                s = futures[fut]
+                try:
+                    result[s] = fut.result()
+                except Exception:
+                    result[s] = []
+        self.send_json({"map": result})
 
     def _serve_local_file(self, file_path: str) -> None:
         now = time.time()
@@ -1163,152 +833,6 @@ class AppHandler(SimpleHTTPRequestHandler):
                         break
                     self.wfile.write(chunk)
 
-    def handle_youtube_stream(self, query: dict[str, list[str]]) -> None:
-        video_id = query.get("videoId", [""])[0].strip()
-        if not video_id:
-            self.send_response(HTTPStatus.BAD_REQUEST)
-            self.end_headers()
-            return
-        if yt_dlp is None:
-            self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
-            self.end_headers()
-            return
-        cached = AUDIO_FILE_CACHE.get(video_id)
-        if cached:
-            cpath, ctime = cached
-            if os.path.exists(cpath) and (time.time() - ctime) < AUDIO_FILE_TTL:
-                log.info("Serving cached file for %s", video_id)
-                self._serve_local_file(cpath)
-                return
-            else:
-                del AUDIO_FILE_CACHE[video_id]
-                try:
-                    os.remove(cpath)
-                except OSError:
-                    pass
-        
-        retry_count = 0
-        clients = ("android_vr", "android")
-        
-        while retry_count < len(clients):
-            try:
-                # При повторе (403 ошибка) сбрасываем кэш URL
-                player_client = clients[retry_count]
-                cache_key = f"{video_id}:{player_client}"
-                if retry_count > 0:
-                    log.info("YouTube stream retry %d for %s using %s (clearing cache)", retry_count, video_id, player_client)
-                    YT_URL_CACHE.pop(cache_key, None)
-                
-                audio_url, _ = self._yt_extract_audio_url(video_id, player_client)
-                if not audio_url:
-                    self.send_response(HTTPStatus.NOT_FOUND)
-                    self.end_headers()
-                    return
-                
-                range_header = self.headers.get("Range")
-                # Расширенные заголовки для обхода блокировки YouTube
-                upstream_headers = {
-                    "User-Agent": DEFAULT_UA,
-                    "Accept": "*/*",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Origin": "https://www.youtube.com",
-                    "Referer": "https://www.youtube.com/",
-                }
-                if range_header:
-                    upstream_headers["Range"] = range_header
-
-                req = urllib.request.Request(audio_url, headers=upstream_headers)
-                with urllib.request.urlopen(req, timeout=15) as upstream:
-                    status = HTTPStatus(upstream.status if upstream.status in (200, 206) else 200)
-                    self.send_response(status)
-                    _proxy_stream(self, upstream)
-                return  # Успешно — выходим
-                
-            except urllib.error.HTTPError as error:
-                if error.code == 403 and retry_count < len(clients) - 1:
-                    log.warning("YouTube stream 403 Forbidden for %s, retrying...", video_id)
-                    retry_count += 1
-                    time.sleep(0.5)  # Небольшая задержка перед повтором
-                    continue
-                else:
-                    log.warning("YouTube stream error: %s", error)
-                    fallback = self._youtube_cached_file(video_id)
-                    if fallback:
-                        self._serve_local_file(fallback)
-                        return
-                    try:
-                        self.send_response(HTTPStatus.BAD_GATEWAY)
-                        self.end_headers()
-                    except Exception:
-                        pass
-                    return
-            except Exception as error:
-                log.warning("YouTube stream error: %s", error)
-                fallback = self._youtube_cached_file(video_id)
-                if fallback:
-                    self._serve_local_file(fallback)
-                    return
-                try:
-                    self.send_response(HTTPStatus.BAD_GATEWAY)
-                    self.end_headers()
-                except Exception:
-                    pass
-                return
-
-    def handle_music_stream(self, query: dict[str, list[str]]) -> None:
-        url = query.get("url", [""])[0].strip()
-        if not url:
-            self.send_response(HTTPStatus.BAD_REQUEST)
-            self.end_headers()
-            return
-        if yt_dlp is None:
-            self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
-            self.end_headers()
-            return
-        try:
-            ydl_opts = {
-                "format": "bestaudio/best",
-                "quiet": True,
-                "no_warnings": True,
-                "socket_timeout": 15,
-                "extract_flat": False,
-            }
-            with _limited_youtube_dl(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                audio_url = info.get("url")
-                if not audio_url:
-                    for f in (info.get("formats") or []):
-                        if f.get("vcodec") != "none" and f.get("url"):
-                            audio_url = f["url"]
-                            break
-                    if not audio_url:
-                        for f in (info.get("formats") or []):
-                            if f.get("ext") in ("mp3", "m4a", "webm", "aac") and f.get("url"):
-                                audio_url = f["url"]
-                                break
-                if not audio_url:
-                    self.send_json({"error": "Не удалось получить аудиопоток"}, HTTPStatus.NOT_FOUND)
-                    return
-                ctype = "audio/m4a"
-                ext = info.get("ext", "")
-                if ext in ("mp3",): ctype = "audio/mpeg"
-                elif ext in ("webm",): ctype = "audio/webm"
-                range_header = self.headers.get("Range")
-                upstream_headers = {"User-Agent": DEFAULT_UA}
-                if range_header:
-                    upstream_headers["Range"] = range_header
-                req = urllib.request.Request(audio_url, headers=upstream_headers)
-                with urllib.request.urlopen(req, timeout=30) as upstream:
-                    status = HTTPStatus(upstream.status if upstream.status in (200, 206) else 200)
-                    self.send_response(status)
-                    _proxy_stream(self, upstream, content_type=ctype)
-        except Exception as error:
-            log.warning("Music stream error: %s", error)
-            try:
-                self.send_response(HTTPStatus.BAD_GATEWAY)
-                self.end_headers()
-            except Exception:
-                pass
 
     def _lrclib_request(self, url: str) -> dict | None:
         try:
@@ -2108,7 +1632,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "quiet": True, "no_warnings": True, "socket_timeout": 15,
                     "extract_flat": True, "default_search": "scsearch",
                 }
-                with _limited_youtube_dl(ydl_opts) as ydl:
+                with _limited_ydl(ydl_opts) as ydl:
                     result = ydl.extract_info(f"scsearch20:{search_title}", download=False)
                 items = []
                 for entry in (result.get("entries") or [])[:20]:
@@ -2149,31 +1673,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         except ValueError:
             count = 15
         try:
-            ydl_opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "socket_timeout": 20,
-                "extract_flat": True,
-                "default_search": "scsearch",
-            }
-            with _limited_youtube_dl(ydl_opts) as ydl:
-                result = ydl.extract_info(f"scsearch{count}:{text}", download=False)
-            items = []
-            for entry in (result.get("entries") or [])[:count]:
-                if not isinstance(entry, dict):
-                    continue
-                url = entry.get("webpage_url") or entry.get("url") or ""
-                if not url:
-                    continue
-                items.append({
-                    "id": str(entry.get("id", "")),
-                    "url": url,
-                    "title": entry.get("title", "") or "",
-                    "artist": entry.get("uploader") or entry.get("channel") or "",
-                    "thumbnail": _best_thumbnail(entry.get("thumbnails") or []),
-                    "duration": entry.get("duration") or 0,
-                })
-            self.send_json({"tracks": items})
+            self.send_json({"tracks": _sc_search_tracks(text, count)})
+        except ServiceBusyError as error:
+            self.send_json({"error": str(error)}, HTTPStatus.SERVICE_UNAVAILABLE)
         except Exception as error:
             self.send_json({"error": f"Ошибка поиска SoundCloud: {error}"}, HTTPStatus.BAD_GATEWAY)
 
@@ -2185,45 +1687,25 @@ class AppHandler(SimpleHTTPRequestHandler):
         if yt_dlp is None:
             self.send_json({"error": "yt-dlp не установлен"}, HTTPStatus.SERVICE_UNAVAILABLE)
             return
-        now = time.time()
-        cached = SC_URL_CACHE.get(url)
-        if cached and (now - cached[2]) < SC_URL_TTL:
-            self.send_json({"url": cached[0], "kind": cached[1]})
-            return
+        fresh = query.get("fresh", [""])[0].strip() == "1"
         try:
-            ydl_opts = {
-                "format": "http_mp3_1_0/http_mp3/bestaudio[protocol^=http]/bestaudio",
-                "quiet": True,
-                "no_warnings": True,
-                "socket_timeout": 20,
-                "noplaylist": True,
-            }
-            with _limited_youtube_dl(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-            audio_url = info.get("url") or ""
-            if not audio_url:
-                for fmt in info.get("formats", []):
-                    if fmt.get("acodec") != "none" and fmt.get("url"):
-                        audio_url = fmt["url"]
-                        break
-            if not audio_url:
-                self.send_json({"error": "Не удалось извлечь аудиопоток"}, HTTPStatus.NOT_FOUND)
-                return
-            proto = (info.get("protocol") or "").lower()
-            kind = "hls" if ("m3u8" in proto or "hls" in proto) else "http"
-            SC_URL_CACHE[url] = (audio_url, kind, now)
+            audio_url, kind, title, duration = _sc_extract_audio_url(url, fresh=fresh)
             self.send_json({
                 "url": audio_url,
                 "kind": kind,
-                "title": info.get("title", ""),
-                "duration": info.get("duration") or 0,
+                "title": title,
+                "duration": duration,
             })
+        except ServiceBusyError as error:
+            self.send_json({"error": str(error)}, HTTPStatus.SERVICE_UNAVAILABLE)
         except Exception as error:
             self.send_json({"error": f"Ошибка извлечения аудио: {error}"}, HTTPStatus.BAD_GATEWAY)
 
     def handle_sc_stream(self, query: dict[str, list[str]]) -> None:
-        """Фолбэк проигрывания: трек без progressive-URL (только HLS) скачиваем
-        в кэш и отдаём локально с поддержкой Range — так же, как YouTube."""
+        """Проигрывание: progressive-URL отдаём 302 редиректом на подпись
+        SoundCloud (мгновенный старт, Range на стороне CDN). Только треки
+        без progressive-URL (HLS-only) скачиваем в кэш и отдаём локально
+        с поддержкой Range."""
         url = query.get("url", [""])[0].strip()
         if not url:
             self.send_response(HTTPStatus.BAD_REQUEST)
@@ -2231,6 +1713,23 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if yt_dlp is None:
             self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
+            self.end_headers()
+            return
+        try:
+            audio_url, kind, _, _ = _sc_extract_audio_url(url)
+        except ServiceBusyError:
+            self.send_response(HTTPStatus.SERVICE_UNAVAILABLE)
+            self.end_headers()
+            return
+        except Exception as error:
+            log.warning("SC stream extract failed for %s: %s", url, error)
+            self.send_response(HTTPStatus.BAD_GATEWAY)
+            self.end_headers()
+            return
+        if kind == "http" and audio_url.startswith("http"):
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", audio_url)
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             return
         key = hashlib.sha1(url.encode("utf-8")).hexdigest()

@@ -114,16 +114,22 @@ function resize(){var d=Math.min(window.devicePixelRatio||1,1.5);var w=container
 resize();
 var ro=new ResizeObserver(resize);ro.observe(container);
 var start=performance.now();var raf=0;var paused=false;
-function render(now){if(paused)return;
+var reduceMq=(window.matchMedia?window.matchMedia('(prefers-reduced-motion: reduce)'):null);
+function motionOK(){return !document.hidden&&!(reduceMq&&reduceMq.matches);}
+function kick(){if(paused||raf||!motionOK())return;raf=requestAnimationFrame(render);}
+function render(now){raf=0;if(paused)return;
 mx.x+=(tmx.x-mx.x)*0.045;mx.y+=(tmx.y-mx.y)*0.045;
 gl.uniform2f(loc.u_mouse,mx.x,mx.y);gl.uniform1f(loc.u_time,(now-start)/1000);
 gl.uniform1f(loc.u_speed,speed);gl.uniform1f(loc.u_intensity,intensity);
 gl.uniform1f(loc.u_grain,grain);gl.uniform1f(loc.u_vignette,vignette);
 gl.uniform1f(loc.u_mouseInfluence,mouseInfluence);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
-raf=requestAnimationFrame(render);}
-raf=requestAnimationFrame(render);
-return{destroy:function(){cancelAnimationFrame(raf);container.removeEventListener('pointermove',onMove);container.removeEventListener('pointerleave',onLeave);ro.disconnect();gl.deleteBuffer(buf);gl.deleteProgram(pg);gl.deleteShader(vs);gl.deleteShader(fs);},
-pause:function(){paused=true;cancelAnimationFrame(raf);},
-resume:function(){if(!paused)return;paused=false;start=performance.now()-((performance.now()-start)%16.67);raf=requestAnimationFrame(render);}};
+if(motionOK())raf=requestAnimationFrame(render);}
+render(performance.now());kick();
+function onVis(){if(document.hidden){if(raf){cancelAnimationFrame(raf);raf=0;}}else{kick();}}
+document.addEventListener('visibilitychange',onVis);
+if(reduceMq&&reduceMq.addEventListener){reduceMq.addEventListener('change',function(){if(motionOK())kick();});}
+return{destroy:function(){cancelAnimationFrame(raf);raf=0;document.removeEventListener('visibilitychange',onVis);container.removeEventListener('pointermove',onMove);container.removeEventListener('pointerleave',onLeave);ro.disconnect();gl.deleteBuffer(buf);gl.deleteProgram(pg);gl.deleteShader(vs);gl.deleteShader(fs);},
+pause:function(){paused=true;if(raf){cancelAnimationFrame(raf);raf=0;}},
+resume:function(){if(!paused)return;paused=false;start=performance.now();kick();}};
 };
 })();

@@ -34,21 +34,17 @@ MB_BASE = os.getenv("MB_BASE", "https://musicbrainz.org")
 WIKIDATA_BASE = os.getenv("WIKIDATA_BASE", "https://www.wikidata.org")
 WIKIMEDIA_BASE = os.getenv("WIKIMEDIA_BASE", "https://commons.wikimedia.org")
 AUDIODB_BASE = os.getenv("AUDIODB_BASE", "https://www.theaudiodb.com")
-YT_BASE = os.getenv("YT_BASE", "https://www.youtube.com")
 PYPI_BASE = os.getenv("PYPI_BASE", "https://pypi.org")
 
 # ---------------------------------------------------------------------------
 # Cache TTL (sec) — все времена жизни кэшей в одном месте
 # ---------------------------------------------------------------------------
-YT_URL_TTL = 900  # 15 мин — подписанные ссылки YouTube протухают быстро
 LYRICS_TTL = 3600
-AUDIO_FILE_TTL = 1800  # 30 мин — временный HLS-кэш SoundCloud
-YT_FILE_TTL = 7 * 24 * 3600  # 7 дней — локальные файлы YouTube
+AUDIO_FILE_TTL = 1800  # 30 мин — временный файловый кэш стримов
 ARTIST_IMG_TTL = 86400
 ARTIST_BIO_TTL = 86400
 WIKI_PAGE_TTL = 86400
-RELATED_IDS_TTL = 86400
-SC_URL_TTL = 3000  # ~50 мин — подписанные URL SoundCloud
+SC_URL_TTL = 480  # 8 мин — подписанные URL SoundCloud живут ~10 мин, дольше кэшировать нельзя
 ZVUK_URL_TTL = 2400
 ZVUK_SEARCH_TTL = 600
 
@@ -58,7 +54,7 @@ ZVUK_SEARCH_TTL = 600
 MAX_JSON_BODY = 16_384
 MAX_CACHE_ENTRIES = 512
 MAX_ARTIST_IMAGE_BYTES = 8 * 1024 * 1024
-YT_DLP_CONCURRENCY = 3
+YDL_CONCURRENCY = 3
 EXTERNAL_API_CONCURRENCY = 8
 SC_DOWNLOAD_QUEUE_SIZE = 8
 SC_DOWNLOAD_WORKERS = 2
@@ -67,7 +63,6 @@ BIND_RETRIES = 25
 # ---------------------------------------------------------------------------
 # Timeouts & intervals (sec)
 # ---------------------------------------------------------------------------
-YT_BLOCK_COOLDOWN = 2 * 60
 CACHE_CLEANUP_INTERVAL = 300  # 5 мин
 SC_JOB_TTL = 900  # 15 мин — хранить завершённые задачи
 YTDL_TIMEOUT_SHORT = 15
@@ -76,7 +71,6 @@ YTDL_TIMEOUT_LONG = 30
 EXTERNAL_API_TIMEOUT = 10
 GENIUS_TIMEOUT = 8
 PYPI_TIMEOUT = 10
-YT_COOKIES_TIMEOUT = 30
 
 # ---------------------------------------------------------------------------
 # UI / Window

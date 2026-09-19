@@ -88,13 +88,21 @@ gl.uniform3f(loc.u_col3,c3[0],c3[1],c3[2]);
 function resize(){var d=Math.min(window.devicePixelRatio||1,2);var w=container.getBoundingClientRect();canvas.width=Math.max(1,Math.floor(w.width*d));canvas.height=Math.max(1,Math.floor(w.height*d));gl.viewport(0,0,canvas.width,canvas.height);gl.uniform2f(loc.u_res,canvas.width,canvas.height);}
 resize();
 var ro=new ResizeObserver(resize);ro.observe(container);
-var start=performance.now();var raf=0;
-function render(now){
+var start=performance.now();var raf=0;var paused=false;
+var reduceMq=(window.matchMedia?window.matchMedia('(prefers-reduced-motion: reduce)'):null);
+function motionOK(){return !document.hidden&&!(reduceMq&&reduceMq.matches);}
+function kick(){if(paused||raf||!motionOK())return;raf=requestAnimationFrame(render);}
+function render(now){raf=0;if(paused)return;
 gl.uniform1f(loc.u_time,(now-start)/1000);
 gl.uniform1f(loc.u_speed,speed);
 gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
-raf=requestAnimationFrame(render);}
-raf=requestAnimationFrame(render);
-return{destroy:function(){cancelAnimationFrame(raf);ro.disconnect();gl.deleteBuffer(buf);gl.deleteProgram(pg);gl.deleteShader(vs);gl.deleteShader(fs);}};
+if(motionOK())raf=requestAnimationFrame(render);}
+render(performance.now());kick();
+function onVis(){if(document.hidden){if(raf){cancelAnimationFrame(raf);raf=0;}}else{kick();}}
+document.addEventListener('visibilitychange',onVis);
+if(reduceMq&&reduceMq.addEventListener){reduceMq.addEventListener('change',function(){if(motionOK())kick();});}
+return{destroy:function(){cancelAnimationFrame(raf);raf=0;document.removeEventListener('visibilitychange',onVis);ro.disconnect();gl.deleteBuffer(buf);gl.deleteProgram(pg);gl.deleteShader(vs);gl.deleteShader(fs);},
+pause:function(){paused=true;if(raf){cancelAnimationFrame(raf);raf=0;}},
+resume:function(){if(!paused)return;paused=false;start=performance.now();kick();}};
 };
 })();

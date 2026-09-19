@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#08080c" />
+<meta name="description" content="States harness for player components" />
+<title>Player states harness</title>
+<style>
+:root{
+  --bg-0:#08080c; --text-1:#f2f3f7; --text-2:#a3a7b4; --text-3:#848899;
+  --line:rgba(255,255,255,.1); --line-strong:rgba(255,255,255,.18);
+  --dyn-h:262; --dyn-accent:#8b5cf6; --danger:#ff5d6c;
+  --r-sm:12px; --r-md:16px; --r-lg:22px; --r-full:999px;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+*{box-sizing:border-box}
+body{touch-action:manipulation}
+.skip{position:fixed;top:-48px;left:16px;z-index:9;padding:10px 16px;border-radius:12px;
+  background:var(--dyn-accent);color:#fff;font-weight:700;text-decoration:none}
+.skip:focus-visible{top:12px}
+html{background:var(--bg-0);color-scheme:dark}
+body{margin:0;background:var(--bg-0);color:var(--text-1);
+  font:14px/1.5 Inter,system-ui,sans-serif;padding:32px;max-width:900px}
+h1{font-size:28px;margin:0 0 6px;text-wrap:balance}
+h2{font-size:17px;margin:34px 0 12px;text-wrap:balance;color:var(--text-1)}
+p.sub{color:var(--text-3);font-size:13px;margin:0 0 8px}
+button{font:inherit;color:inherit}
+button:focus-visible,[role="slider"]:focus-visible,.trow:focus-visible{
+  outline:2px solid hsla(var(--dyn-h),90%,70%,.8);outline-offset:2px}
+/* toggle */
+.toggle{position:relative;flex:0 0 auto;width:44px;height:25px;border:1px solid var(--line-strong);
+  border-radius:var(--r-full);background:rgba(255,255,255,.07);cursor:pointer;padding:0;
+  transition:background .25s var(--ease),border-color .25s var(--ease)}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:50%;
+  background:#fff;transition:left .25s var(--ease)}
+.toggle.on{background:var(--dyn-accent);border-color:transparent}
+.toggle.on::after{left:21px}
+.toggle:disabled{opacity:.5;cursor:not-allowed}
+/* rows */
+.tlist{border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;max-width:640px}
+.trow{display:grid;grid-template-columns:42px minmax(0,1fr)auto 40px;gap:12px;align-items:center;
+  min-height:62px;padding:0 16px 0 12px;background:transparent;border:0;width:100%;
+  color:var(--text-1);font-size:13px;text-align:left;cursor:pointer}
+.trow:hover{background:rgba(255,255,255,.035)}
+.trow .go:hover{background:rgba(255,255,255,.08);border-color:var(--line-strong)}
+.trow .pos{color:var(--text-3);font-size:12px;font-variant-numeric:tabular-nums;text-align:center}
+.trow .meta{min-width:0}.trow .meta b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trow .meta small{color:var(--text-3);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.trow .dur{color:var(--text-3);font-size:11.5px;font-variant-numeric:tabular-nums}
+.trow .go{width:32px;height:32px;border-radius:50%;border:1px solid var(--line-strong);
+  background:transparent;cursor:pointer;display:grid;place-items:center;color:var(--text-1)}
+.trow.playing .pos{color:var(--dyn-accent)}
+.trow.playing{box-shadow:inset 2px 0 0 var(--dyn-accent)}
+.trow.err .meta small{color:var(--danger)}
+.skel{display:flex;gap:12px;align-items:center;min-height:62px;padding:0 16px}
+.skel i{display:block;background:rgba(255,255,255,.08);border-radius:6px}
+.stack{display:flex;gap:14px;align-items:center;margin:10px 0;flex-wrap:wrap}
+/* modal */
+.mback{position:fixed;inset:0;background:rgba(0,0,0,.6);overscroll-behavior:contain}
+.mcard{position:fixed;left:50%;top:18%;transform:translateX(-50%);width:min(420px,calc(100% - 40px));
+  background:rgba(18,18,25,.97);border:1px solid var(--line-strong);border-radius:var(--r-lg);
+  padding:28px;text-align:center}
+.mcard h3{margin:0 0 8px;font-size:19px}
+.mcard p{margin:0 0 16px;color:var(--text-2);font-size:13.5px}
+.mrow{display:flex;gap:10px;justify-content:center}
+.btn{padding:10px 18px;border-radius:12px;border:1px solid var(--line-strong);background:transparent;cursor:pointer}
+.btn:hover{background:rgba(255,255,255,.06);border-color:var(--line-strong)}
+.btn.danger{background:linear-gradient(135deg,#c82438,#b42334);border-color:transparent;color:#fff;font-weight:700}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.minp{width:100%;padding:12px 14px;border:1px solid var(--line-strong);border-radius:var(--r-md);
+  background:rgba(255,255,255,.05);color:var(--text-1);margin-bottom:16px}
+.minp[aria-invalid="true"]{border-color:var(--danger)}
+.merr{color:var(--danger);font-size:12.5px;min-height:18px;margin:0 0 8px}
+/* player bar */
+.pbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;
+  border:1px solid var(--line);border-radius:var(--r-md);padding:14px 18px;max-width:640px;background:rgba(11,11,16,.9)}
+.pbar .ctl{display:flex;gap:8px;align-items:center}
+.pbtn{min-width:36px;height:36px;border-radius:50%;border:1px solid var(--line-strong);background:transparent;
+  cursor:pointer;display:grid;place-items:center}
+.pbtn.play{width:44px;height:44px;background:#fff;color:#0b0b12;border:0;font-weight:700}
+.pbtn:hover{border-color:var(--line-strong);background:rgba(255,255,255,.06)}
+.pbtn.play:hover{background:#e8eaf0}
+.pbtn[aria-pressed="true"]{color:var(--dyn-accent);border-color:var(--dyn-accent)}
+.pbtn:disabled{opacity:.5;cursor:not-allowed}
+.slider{position:relative;height:24px;flex:1;min-width:80px;cursor:pointer}
+.slider .tr{position:absolute;left:0;right:0;top:11px;height:3px;border-radius:2px;background:rgba(255,255,255,.14)}
+.slider .fl{position:absolute;left:0;top:11px;height:3px;border-radius:2px;background:var(--dyn-accent);width:30%}
+.slider .kb{position:absolute;top:12px;width:13px;height:13px;border-radius:50%;background:#fff;transform:translate(-50%,-50%);left:30%}
+.tag{font-size:11px;color:var(--text-3);border:1px solid var(--line);border-radius:8px;padding:2px 8px}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Перейти к содержимому</a>
+<main id="main">
+<h1>Player component states</h1>
+<p class="sub">Toggle, track row, modal, player bar. Все состояния из спеков components/player-*.md</p>
+
+<h2>1. Toggle <span class="tag">button[role=switch]</span></h2>
+<div class="stack">
+  <button class="toggle" role="switch" aria-checked="false" aria-label="Визуализация"></button><span class="tag">off</span>
+  <button class="toggle on" role="switch" aria-checked="true" aria-label="Визуализация"></button><span class="tag">on</span>
+  <button class="toggle" role="switch" aria-checked="false" aria-label="Визуализация" disabled></button><span class="tag">disabled</span>
+  <button class="toggle" id="liveToggle" role="switch" aria-checked="false" aria-label="Живой тумблер"></button><span class="tag">live (клик)</span>
+</div>
+
+<h2>2. Track row <span class="tag">list / listitem</span></h2>
+<div class="tlist" role="list" id="tlist">
+  <div class="trow" role="listitem">
+    <span class="pos">01</span>
+    <span class="meta"><b>Длинное название трека, которое обязано обрезаться многоточием</b><small>Исполнитель · Альбом</small></span>
+    <span class="dur">4:05</span>
+    <button class="go" aria-label="Воспроизвести"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="8,5 20,12 8,19"/></svg></button>
+  </div>
+  <div class="trow playing" role="listitem" tabindex="0" aria-current="true" data-live-row>
+    <span class="pos">02</span>
+    <span class="meta"><b>Сейчас играет</b><small>Исполнитель · Альбом</small></span>
+    <span class="dur">2:41</span>
+    <button class="go" aria-label="Пауза"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg></button>
+  </div>
+  <div class="trow err" role="listitem">
+    <span class="pos">03</span>
+    <span class="meta"><b>Битый трек</b><small><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 22 20H2Z"/><line x1="12" y1="9" x2="12" y2="13"/></svg> Не удалось загрузить, повторить</small></span>
+    <span class="dur">--:--</span>
+    <button class="go" aria-label="Повторить"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><polygon points="18,2 18,8 12,8" fill="currentColor" stroke="none"/></svg></button>
+  </div>
+</div>
+<p class="sub">loading:</p>
+<div class="tlist" role="list" aria-busy="true">
+  <div class="skel" aria-hidden="true"><i style="width:40px;height:40px;border-radius:8px"></i><i style="flex:1;height:12px"></i><i style="width:40px;height:12px"></i></div>
+</div>
+
+<h2>3. Modal <span class="tag">dialog + focus trap</span></h2>
+<div class="stack">
+  <button class="btn" id="openConfirm">Открыть confirm</button>
+  <button class="btn" id="openPrompt">Открыть prompt</button>
+  <button class="btn" id="openList">Открыть list</button>
+</div>
+<div id="mback" class="mback" hidden></div>
+<div id="mcard" class="mcard" role="dialog" aria-modal="true" aria-labelledby="mtitle" hidden>
+  <h3 id="mtitle">Удалить плейлист?</h3>
+  <p id="mbody">«Название» будет удалён безвозвратно.</p>
+  <input id="minput" class="minp" hidden autocomplete="off" spellcheck="false" aria-label="Название" />
+  <p id="merr" class="merr" hidden></p>
+  <div id="mlist" hidden></div>
+  <div class="mrow">
+    <button class="btn" id="mcancel">Отмена</button>
+    <button class="btn danger" id="mconfirm">Удалить</button>
+  </div>
+</div>
+
+<h2>4. Player bar <span class="tag">slider + toggles</span></h2>
+<div class="pbar" id="pbar">
+  <div>
+    <div><b>Трек</b> <span style="color:var(--text-3)">· Исполнитель</span></div>
+    <div class="slider" id="seek" role="slider" tabindex="0" aria-label="Перемотка"
+         aria-valuemin="0" aria-valuemax="245" aria-valuenow="74" aria-valuetext="1:14 из 4:05">
+      <div class="tr"></div><div class="fl" id="seekFill"></div><div class="kb" id="seekKnob"></div>
+    </div>
+  </div>
+  <div class="ctl">
+    <button class="pbtn" id="shuf" aria-pressed="false" aria-label="Перемешать"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h13"/><polygon points="14,4 18,7 14,10" fill="currentColor" stroke="none"/><path d="M20 17H7"/><polygon points="10,14 6,17 10,20" fill="currentColor" stroke="none"/></svg></button>
+    <button class="pbtn play" id="playBtn" aria-label="Пауза"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg></button>
+  </div>
+</div>
+<p class="sub">idle/disabled + busy:</p>
+<div class="pbar" aria-busy="true">
+  <div><span style="color:var(--text-3)">Ничего не играет</span></div>
+  <div class="ctl">    <button class="pbtn play" disabled aria-label="Воспроизвести"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="8,5 20,12 8,19"/></svg></button></div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+/* live toggle */
+$('#liveToggle').addEventListener('click', (e) => {
+  const b = e.currentTarget, on = b.classList.toggle('on');
+  b.setAttribute('aria-checked', on);
+});
+/* live rows: Enter/Space */
+document.querySelectorAll('[data-live-row]').forEach((row) => {
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.querySelector('.go')?.click(); }
+  });
+});
+/* modal with focus trap + return focus */
+const back = $('#mback'), card = $('#mcard');
+let lastFocus = null, mode = 'confirm';
+const focusables = () => [...card.querySelectorAll('button:not([disabled]),input:not([hidden])')]
+  .filter((el) => el.offsetParent !== null);
+function openModal(m) {
+  mode = m; lastFocus = document.activeElement;
+  $('#mtitle').textContent = m === 'confirm' ? 'Удалить плейлист?' : m === 'prompt' ? 'Переименовать' : 'Добавить в плейлист';
+  $('#minput').hidden = m !== 'prompt';
+  $('#mconfirm').textContent = m === 'confirm' ? 'Удалить' : 'Сохранить';
+  back.hidden = card.hidden = false;
+  setTimeout(() => (m === 'prompt' ? $('#minput') : $('#mconfirm')).focus(), 30);
+}
+function closeModal() {
+  back.hidden = card.hidden = true;
+  if (lastFocus?.focus) lastFocus.focus();
+}
+card.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeModal(); return; }
+  if (e.key !== 'Tab') return;
+  const f = focusables();
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+$('#openConfirm').addEventListener('click', () => openModal('confirm'));
+$('#openPrompt').addEventListener('click', () => openModal('prompt'));
+$('#openList').addEventListener('click', () => openModal('list'));
+$('#mcancel').addEventListener('click', closeModal);
+back.addEventListener('click', closeModal);
+/* slider: arrows + PgUp/PgDn + Home/End */
+const seek = $('#seek');
+function setSeek(v, max = 245) {
+  v = Math.max(0, Math.min(max, v));
+  seek.setAttribute('aria-valuenow', v);
+  const m = Math.floor(v / 60), s = String(v % 60).padStart(2, '0');
+  seek.setAttribute('aria-valuetext', `${m}:${s} из 4:05`);
+  $('#seekFill').style.width = (v / max * 100) + '%';
+  $('#seekKnob').style.left = (v / max * 100) + '%';
+}
+seek.addEventListener('keydown', (e) => {
+  const v = Number(seek.getAttribute('aria-valuenow'));
+  if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); setSeek(v + 5); }
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); setSeek(v - 5); }
+  else if (e.key === 'PageUp') { e.preventDefault(); setSeek(v + 24); }
+  else if (e.key === 'PageDown') { e.preventDefault(); setSeek(v - 24); }
+  else if (e.key === 'Home') { e.preventDefault(); setSeek(0); }
+  else if (e.key === 'End') { e.preventDefault(); setSeek(245); }
+});
+setSeek(74);
+/* toggles */
+$('#shuf').addEventListener('click', (e) => {
+  const b = e.currentTarget, on = b.getAttribute('aria-pressed') !== 'true';
+  b.setAttribute('aria-pressed', on);
+});
+$('#playBtn').addEventListener('click', (e) => {
+  const b = e.currentTarget, paused = b.getAttribute('aria-label') === 'Пауза';
+  b.innerHTML = paused
+    ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="8,5 20,12 8,19"/></svg>'
+    : '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>';
+  b.setAttribute('aria-label', paused ? 'Воспроизвести' : 'Пауза');
+});
+</script>
+</main>
+</body>
+</html>

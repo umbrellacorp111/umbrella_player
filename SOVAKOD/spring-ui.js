@@ -272,13 +272,23 @@
     // springs on every pointermove and visibly trembled.
     const SELECTOR = '.playlist-card';
 
+    let tiltPending = null;
+    let tiltRaf = 0;
     document.addEventListener('pointermove', (e) => {
       const card = e.target && e.target.closest ? e.target.closest(SELECTOR) : null;
       if (!card || e.pointerType === 'touch') return;
-      const rect = card.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / rect.width - 0.5;
-      const y = (e.clientY - rect.top) / rect.height - 0.5;
-      springTo(card, { rotateY: x * TILT_MAX * 2, rotateX: -y * TILT_MAX * 2 }, SPRING.tilt);
+      tiltPending = { card, x: e.clientX, y: e.clientY };
+      if (tiltRaf) return;
+      tiltRaf = requestAnimationFrame(() => {
+        tiltRaf = 0;
+        const p = tiltPending;
+        tiltPending = null;
+        if (!p || !p.card.isConnected) return;
+        const rect = p.card.getBoundingClientRect();
+        const x = (p.x - rect.left) / rect.width - 0.5;
+        const y = (p.y - rect.top) / rect.height - 0.5;
+        springTo(p.card, { rotateY: x * TILT_MAX * 2, rotateX: -y * TILT_MAX * 2 }, SPRING.tilt);
+      });
     }, true);
 
     document.addEventListener('pointerleave', (e) => {

@@ -73,19 +73,39 @@ function saveArchaeo() {
   try { localStorage.setItem(ARCHAEO_KEY, JSON.stringify(archaeo)); } catch (e) {}
 }
 
+function seedOf(t) {
+  return `${(t.artist || '').trim()} — ${(t.title || '').trim()}`;
+}
+
+function nameKeyOf(t) {
+  return `${(t.title || '').trim().toLowerCase()}|${(t.artist || '').trim().toLowerCase()}`;
+}
+
 async function loadArchaeoTracks() {
+  let rows = [];
   try {
-    const rows = await idbGetAll();
-    return rows.map((r) => ({
-      id: r.id, title: r.title, artist: r.artist, album: r.album,
-      duration: r.duration, color: r.color, dbId: r.id,
-      source: r.source || 'local', videoId: r.videoId || null, thumbnail: r.thumbnail || null,
+    rows = await idbGetAll();
+  } catch (e) { rows = []; }
+  const local = rows.map((r) => ({
+    id: r.id, title: r.title, artist: r.artist, album: r.album,
+    duration: r.duration, color: r.color, dbId: r.id,
+    source: r.source || 'local', scUrl: null, scId: null, path: null, thumbnail: r.thumbnail || null,
+  }));
+  let sc = [];
+  try {
+    if (typeof refreshScDownloaded === 'function') await refreshScDownloaded();
+    const lib = (typeof state !== 'undefined' && state.scLibTracks) || [];
+    sc = lib.map((f) => ({
+      id: 'sc:' + f.path, title: f.title, artist: f.artist, album: 'SoundCloud',
+      duration: f.duration || 0, color: '', dbId: null,
+      source: 'soundcloud', scUrl: null, scId: null, path: f.path, thumbnail: null,
     }));
-  } catch (e) { return []; }
+  } catch (e) { sc = []; }
+  return [...local, ...sc];
 }
 
 function tracksHash(tracks) {
-  const keys = tracks.map((t) => t.videoId || `${(t.title || '')}|${(t.artist || '')}`).sort();
+  const keys = tracks.map((t) => nameKeyOf(t)).sort();
   const sel = keys.slice(0, 50).join('\u0001');
   let h = 2166136261;
   for (let i = 0; i < sel.length; i++) {
@@ -99,11 +119,11 @@ function computePlays(tracks) {
   const map = new Array(tracks.length).fill(0);
   const idxByKey = new Map();
   tracks.forEach((t, i) => {
-    const k = t.videoId || `${(t.title || '').toLowerCase()}|${(t.artist || '').toLowerCase()}`;
+    const k = nameKeyOf(t);
     idxByKey.set(k, i);
   });
   listenLog.forEach((h) => {
-    const k = h.videoId || `${(h.title || '').toLowerCase()}|${(h.artist || '').toLowerCase()}`;
+    const k = `${(h.title || '').toLowerCase()}|${(h.artist || '').toLowerCase()}`;
     const i = idxByKey.get(k);
     if (i != null) map[i]++;
   });
@@ -139,14 +159,14 @@ async function digArchive() {
     const plays = computePlays(tracks);
     const seeded = tracks
       .map((t, i) => ({ t, i, p: plays[i] }))
-      .filter((x) => x.t.videoId)
+      .filter((x) => (x.t.title || '').trim())
       .sort((a, b) => b.p - a.p);
     const seeds = seeded.slice(0, cfg.scope);
     if (!seeds.length) {
-      throw new Error('В библиотеке нет треков с YouTube. Раскопки строятся на связях видео — добавьте треки через поиск.');
+      throw new Error('В коллекции нет треков для раскопок — добавьте музыку и копайте.');
     }
     setStage(`Снимаем отпечатки (${seeds.length} треков)…`, 22);
-    const fp = await fetchFingerprints(seeds.map((s) => s.t.videoId));
+    const fp = await fetchFingerprints(seeds.map((s) => seedOf(s.t)));
     if (cfg.cancel) { cancelDig(); return; }
     setStage('Просеиваем связи…', 60);
     await sleep(30);
@@ -194,11 +214,12 @@ function cancelDig() {
   toast('Раскопки отменены', 'info', 2200);
 }
 
-async function fetchFingerprints(ids) {
-  if (!ids.length) return new Map();
-  const res = await request(`/archaeo/related?ids=${encodeURIComponent(ids.join(','))}&limit=10`, { timeout: 180000 });
+async function fetchFingerprints(seeds) {
+  if (!seeds.length) return new Map();
+  const qs = seeds.map((s) => `s=${encodeURIComponent(s)}`).join('&');
+  const res = await request(`/archaeo/related?${qs}&limit=10`, { timeout: 180000 });
   const map = new Map();
-  Object.entries(res.map || {}).forEach(([id, arr]) => map.set(id, new Set(arr || [])));
+  Object.entries(res.map || {}).forEach(([id, arr]) => map.set(id, new Set((arr || []).map((r) => r.key).filter(Boolean))));
   return map;
 }
 
@@ -239,7 +260,7 @@ function buildEdges(tracks, plays, seeds, fp) {
   for (let i = 0; i < seeds.length; i++) {
     for (let j = i + 1; j < seeds.length; j++) {
       const A = seeds[i].t, B = seeds[j].t;
-      const rA = fp.get(A.videoId), rB = fp.get(B.videoId);
+      const rA = fp.get(seedOf(A)), rB = fp.get(seedOf(B));
       if (!rA || !rB || !rA.size || !rB.size) continue;
       let shared = 0;
       rA.forEach((id) => { if (rB.has(id)) shared++; });
@@ -266,16 +287,16 @@ function buildBridges(tracks, plays, seeds, fp) {
   for (let i = 0; i < top.length; i++) {
     for (let j = i + 1; j < top.length; j++) {
       const A = top[i].t, B = top[j].t;
-      if (A.videoId === B.videoId) continue;
-      const rA = fp.get(A.videoId), rB = fp.get(B.videoId);
+      if (seedOf(A) === seedOf(B)) continue;
+      const rA = fp.get(seedOf(A)), rB = fp.get(seedOf(B));
       if (!rA || !rB) continue;
       const common = [];
       rA.forEach((id) => { if (rB.has(id)) common.push(id); });
       if (!common.length) continue;
       tracks.forEach((x, xi) => {
-        if (!x.videoId || plays[xi] > 1) return;
-        if (x.videoId === A.videoId || x.videoId === B.videoId) return;
-        if (!common.includes(x.videoId)) return;
+        if (plays[xi] > 1) return;
+        if (seedOf(x) === seedOf(A) || seedOf(x) === seedOf(B)) return;
+        if (!common.includes(nameKeyOf(x))) return;
         const prev = seenX.get(xi);
         if (!prev || common.length > prev.common) {
           seenX.set(xi, { a: normArtist(A.artist), b: normArtist(B.artist), xKey: normArtist(x.artist), common: common.length });
@@ -396,8 +417,8 @@ function renderArchaeo() {
       empty.hidden = false;
       status.textContent = 'Ничего не раскопано';
       const t = $('#archaeoEmptyText');
-      if (!data.length) t.textContent = 'Библиотека пуста — добавьте треки через поиск YouTube, а потом копайте.';
-      else if (!data.some((x) => x.videoId)) t.textContent = 'В библиотеке нет треков с YouTube. Раскопки строятся на связях видео — добавьте треки через поиск.';
+      if (!data.length) t.textContent = 'Библиотека пуста — добавьте треки через поиск SoundCloud, а потом копайте.';
+      else if (!data.some((x) => x.title)) t.textContent = 'В коллекции нет треков с названиями — добавьте музыку и копайте.';
       else t.textContent = 'Нажмите «Копать», чтобы изучить связи между артистами и найти скрытые находки.';
     }
   });
@@ -540,15 +561,8 @@ function renderDetail(n) {
 function playArchaeoTrack(idx) {
   const t = archaeoTracks[idx];
   if (!t) return;
-  if (t.videoId) {
-    const list = archaeoTracks.filter((tt) => tt.videoId && tt.source === 'youtube');
-    const i = list.indexOf(t);
-    state.visibleTracks = list.length ? list : [t];
-    playTrack(t, Math.max(0, i));
-  } else {
-    state.visibleTracks = [t];
-    playTrack(t, 0);
-  }
+  state.visibleTracks = archaeoTracks.length ? archaeoTracks : [t];
+  playTrack(t, Math.max(0, archaeoTracks.indexOf(t)));
 }
 
 function renderBridges() {
