@@ -129,6 +129,7 @@ function onVis(){if(document.hidden){if(raf){cancelAnimationFrame(raf);raf=0;}}e
 document.addEventListener('visibilitychange',onVis);
 if(reduceMq&&reduceMq.addEventListener){reduceMq.addEventListener('change',function(){if(motionOK())kick();});}
 return{destroy:function(){cancelAnimationFrame(raf);raf=0;document.removeEventListener('visibilitychange',onVis);container.removeEventListener('pointermove',onMove);container.removeEventListener('pointerleave',onLeave);ro.disconnect();gl.deleteBuffer(buf);gl.deleteProgram(pg);gl.deleteShader(vs);gl.deleteShader(fs);},
+set:function(o){if(!o)return;if(o.speed!=null)speed=o.speed;if(o.intensity!=null)intensity=o.intensity;if(o.grain!=null)grain=o.grain;if(o.vignette!=null)vignette=o.vignette;if(o.mouseInfluence!=null)mouseInfluence=o.mouseInfluence;},
 pause:function(){paused=true;if(raf){cancelAnimationFrame(raf);raf=0;}},
 resume:function(){if(!paused)return;paused=false;start=performance.now();kick();}};
 };

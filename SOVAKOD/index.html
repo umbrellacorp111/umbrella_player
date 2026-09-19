@@ -596,6 +596,7 @@
   <!-- ===================== PLAYER BAR ===================== -->
   <div class="player-bar" id="playerBar" hidden>
     <canvas class="pb-led" id="pbLed" aria-hidden="true"></canvas>
+    <canvas class="pb-cover-waves" id="pbCoverWaves" aria-hidden="true"></canvas>
 
     <div class="pb-left">
       <button class="pb-cover" id="playerCover" aria-label="Развернуть плеер"></button>
@@ -672,7 +673,6 @@
 
     <div class="np-stage">
       <div class="np-art-wrap" id="npArtWrap">
-        <video class="np-video" id="npVideo" src="sewerslvt.mp4" muted loop playsinline preload="none" aria-hidden="true" disablepictureinpicture></video>
         <div class="np-art" id="npArt"></div>
         <div class="np-art-custom" id="npArtCustom" hidden></div>
         <div class="np-art-shine" aria-hidden="true"></div>
@@ -729,7 +729,7 @@
           <button class="np-btn small" id="npCoverBtn" aria-label="Обложка" title="Сменить обложку">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
           </button>
-          <input id="npCoverFile" type="file" accept="image/jpeg,image/png,image/gif,video/mp4,video/webm" hidden />
+          <input id="npCoverFile" type="file" accept="image/jpeg,image/png,image/gif" hidden />
 
           <div class="np-speed-popup np-cover-popup" id="npCoverPopup" hidden>
             <button id="npCoverReplace">Заменить…</button>

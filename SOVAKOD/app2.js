@@ -2098,7 +2098,10 @@ function renderNowPlaying() {
   const track = state.currentTrack;
   const wrap = $('#nowPlaying');
   if (!track) { wrap.hidden = true; return; }
-  $('#npArt').style.setProperty('--cover', track.color || `hsl(${extractHue(track.color)}, 60%, 42%)`);
+  const trackArt = track.thumbnail || track.cover || '';
+  $('#npArt').style.setProperty('--cover', trackArt
+    ? `url(\"${String(trackArt).replace(/\"/g, '%22')}\") center/cover`
+    : (track.color || `hsl(${extractHue(track.color)}, 60%, 42%)`));
   $('#npTitle').textContent = track.title || 'Без названия';
   $('#npArtist').textContent = track.artist || 'Неизвестный исполнитель';
   $('#npAlbum').textContent = track.album || 'Umbrella Player';
@@ -2419,11 +2422,8 @@ function resetAnimation(el) {
 }
 
 function syncVideo() {
-  const video = $('#npVideo');
-  if (!video) return;
   const el = djActiveElement();
-  if (!el.paused) video.play().catch(() => {});
-  else video.pause();
+  if (!el) return;
   const cv = $('#npArtCustom video');
   if (cv) {
     if (!el.paused) cv.play().catch(() => {});
@@ -2442,34 +2442,25 @@ function renderCustomCover() {
   if (!state.customCover) {
     wrap.hidden = true;
     wrap.innerHTML = '';
-    if (video) video.style.display = '';
     if (art) art.style.opacity = '';
     if (btn) btn.classList.remove('active');
     return;
   }
   wrap.hidden = false;
   if (btn) btn.classList.add('active');
-  if (video) video.style.display = 'none';
   if (art) art.style.opacity = '0';
-  const isVideo = state.customCover.type === 'video';
-  if (isVideo) {
-    if (wrap.querySelector('video')) return;
-    wrap.innerHTML = `<video src="${state.customCover.url}" autoplay muted loop playsinline></video>`;
-  } else {
-    if (wrap.querySelector('img')) return;
-    wrap.innerHTML = `<img src="${state.customCover.url}" alt="Обложка" loading="lazy" />`;
-  }
+  if (wrap.querySelector('img')) return;
+  wrap.innerHTML = `<img src="${state.customCover.url}" alt="Обложка" loading="lazy" />`;
 }
 
 function setCustomCoverFile(file) {
   if (!file) return;
   const isImage = file.type.startsWith('image/');
-  const isVideo = file.type === 'video/mp4' || file.type === 'video/webm';
-  if (!isImage && !isVideo) return toast('Поддерживаются JPG, PNG, GIF или MP4', 'error');
+  if (!isImage) return toast('Поддерживаются JPG, PNG или GIF', 'error');
   if (file.size > 50 * 1024 * 1024) return toast('Файл больше 50 МБ', 'error');
   const url = URL.createObjectURL(file);
   if (state.customCover) URL.revokeObjectURL(state.customCover.url);
-  state.customCover = { url, type: isVideo ? 'video' : 'image', name: file.name || 'cover', typeMime: file.type };
+  state.customCover = { url, type: 'image', name: file.name || 'cover', typeMime: file.type };
   renderCustomCover();
   idbSaveCustomCover(file, file.type, file.name).catch(() => {});
   toast('Обложка обновлена', 'success');
@@ -4066,7 +4057,7 @@ async function playAlbumQueue(deezerTracks, artistName) {
     try {
       const data = await request(`/sc/search?q=${encodeURIComponent(artistName + ' ' + dt.title)}&count=1`, { timeout: API_TIMEOUT.default });
       const found = (data.tracks || [])[0];
-      if (found) scTracks.push({ title: found.title, artist: found.artist, scUrl: found.url, scId: found.id, source: 'soundcloud', thumbnail: found.thumbnail, duration: found.duration || dt.duration, album: 'Deezer Альбом', color: '', _keepAlbumOpen: true, _albumRowIndex: i });
+      if (found) scTracks.push({ title: found.title, artist: found.artist, scUrl: found.url, scId: found.id, source: 'soundcloud', thumbnail: dt.cover || found.thumbnail, cover: dt.cover || '', duration: found.duration || dt.duration, album: 'Deezer Альбом', color: '', _keepAlbumOpen: true, _albumRowIndex: i });
     } catch (e) { /* skip */ }
     if (loading) {
       loading.style.setProperty('--album-progress', `${((i + 1) / deezerTracks.length) * 100}%`);
@@ -7305,5 +7296,1186 @@ setTimeout(bootApp, 300);
     setTimeout(attachLaunch, 300);
   } else {
     attachLaunch();
+  }
+})();
+
+
+/* ============================================================
+   Umbrella Player — Living UI v1.2
+   Реактивный слой + стартовая заставка + переключатели в настройках.
+   Дописан в конец app2.js специально: сборка .exe идёт по списку
+   файлов в .spec, отдельные файлы туда не попадают.
+
+   v1.2:
+   • анализатор поднимается сам (ensureAnalyser + resume AudioContext),
+     не завися от настройки «Визуализация»;
+   • если анализатор молчит (нули) — включается синтетический ритм,
+     чтобы интерфейс всё равно дышал;
+   • каждая группа эффектов переключается в Настройках, на лету;
+   • диагностика: Настройки → «Диагностика реактивности».
+   ============================================================ */
+
+(() => {
+  'use strict';
+  if (window.LivingUI) return;
+
+  const root = document.documentElement;
+  const reduceMotion = (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)')) || { matches: false };
+  const qs = (s, r) => (r || document).querySelector(s);
+  const qsa = (s, r) => [...(r || document).querySelectorAll(s)];
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const safe = (fn) => { try { return fn(); } catch (e) { return undefined; } };
+
+  /* ============================================================
+     Конфигурация
+     ============================================================ */
+
+  const GROUPS = [
+    ['cover', 'Живая обложка', 'Дыхание по басу, наклон к курсору, рассыпание при смене трека'],
+    ['aura', 'Энергетическое поле', 'Свечение вокруг панели плеера и полноэкранного режима'],
+    ['depth', 'Глубина интерфейса', 'Размытие дашборда, подъём карточек, перспектива сеток'],
+    ['bg', 'Реактивный фон', 'Зерно, хроматический сдвиг в пиках, морфинг живого фона'],
+    ['states', 'Пауза, старт и финал', 'Виньетка на паузе, вспышка на старте, «сгорание» в конце'],
+    ['cursor', 'Курсор и обложка', 'Орбитальные частицы и перетаскивание большой обложки'],
+    ['extras', 'Мини-эффекты', 'Частицы у избранного, контур загрузки, анимация счётчиков'],
+    ['boot', 'Стартовая заставка', 'Анимация сборки света на экране запуска'],
+    ['synth', 'Ритм без анализатора', 'Если звук не анализируется — двигать интерфейс по синтетическому ритму'],
+    ['debug', 'Диагностика реактивности', 'Панель с FPS, уровнем баса и состоянием аудио-графа'],
+    ['beatSensitivity', 'Чувствительность к биту', 'Насколько сильно все beat-реакции отвечают на удары; диапазон расширен для тонкой настройки.'],
+  ];
+
+  const DEFAULTS = {};
+  GROUPS.forEach(([k]) => { DEFAULTS[k] = k === 'beatSensitivity' ? 2.2 : k !== 'debug'; });
+
+  let config;
+  try { config = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('umbrella_living') || '{}')); }
+  catch (e) { config = Object.assign({}, DEFAULTS); }
+  // Removed effects stay disabled even if an older localStorage config enabled them.
+  delete config.text;
+  delete config.micro;
+  delete config.trail;
+  const saveConfig = () => safe(() => localStorage.setItem('umbrella_living', JSON.stringify(config)));
+  saveConfig();
+
+  function applyConfig() {
+    root.classList.add('lv-on');
+    GROUPS.forEach(([k]) => { if (k !== 'beatSensitivity') root.classList.toggle('lv-' + k, !!config[k]); });
+    if (grain) grain.style.display = config.bg ? '' : 'none';
+    if (aberration) aberration.style.display = config.bg ? '' : 'none';
+    if (vignette) vignette.style.display = config.states ? '' : 'none';
+    if (flash) flash.style.display = config.states ? '' : 'none';
+    if (auraBar) auraBar.style.display = config.aura ? '' : 'none';
+    const auraNp = qs('#lvAuraNp');
+    if (auraNp) auraNp.style.display = config.aura ? '' : 'none';
+    // Listening trail and progress tail were removed.
+    if (!config.cover) { const w = qs('#npArtWrap'); if (w) w.style.transform = ''; }
+    if (!config.depth) qsa('.lv-depth-grid > *').forEach((c) => c.style.removeProperty('--lv-far'));
+    toggleDebug(!!config.debug);
+    syncSettingsUI();
+  }
+
+  /* ============================================================
+     Опоры на app2.js
+     ============================================================ */
+
+  function lowFx() { return !!safe(() => settings && settings.lowFx); }
+  function getAnalyser() { return safe(() => (typeof analyser !== 'undefined' && analyser) ? analyser : null) || null; }
+  function getCtx() { return safe(() => (typeof audioCtx !== 'undefined' && audioCtx) ? audioCtx : null) || null; }
+  function activeAudio() { return safe(() => typeof djActiveElement === 'function' ? djActiveElement() : null) || qs('audio'); }
+  function isPlaying() { const el = activeAudio(); return !!(el && !el.paused && !el.ended); }
+
+  /** Поднимаем аудио-граф сами: настройка «Визуализация» на нас не влияет. */
+  function ensureAudioGraph() {
+    safe(() => { if (typeof ensureAnalyser === 'function') ensureAnalyser(); });
+    const c = getCtx();
+    if (c && c.state === 'suspended') safe(() => c.resume());
+  }
+
+  let hueCache = 262;
+  function refreshHue() {
+    const v = parseFloat(getComputedStyle(root).getPropertyValue('--dyn-h'));
+    if (isFinite(v)) hueCache = v;
+  }
+  const hue = () => hueCache;
+
+  /* ============================================================
+     Слои
+     ============================================================ */
+
+  const fx = document.createElement('canvas');
+  fx.id = 'lvFx';
+  fx.setAttribute('aria-hidden', 'true');
+
+  const mkLayer = (id) => {
+    const d = document.createElement('div');
+    d.id = id; d.className = 'lv-layer';
+    d.setAttribute('aria-hidden', 'true');
+    return d;
+  };
+  const grain = mkLayer('lvGrain');
+  const aberration = mkLayer('lvAberration');
+  const vignette = mkLayer('lvVignette');
+  const flash = mkLayer('lvFlash');
+
+  const auraBar = document.createElement('div');
+  auraBar.id = 'lvAuraBar';
+  auraBar.setAttribute('aria-hidden', 'true');
+
+  const trail = document.createElement('div');
+  trail.id = 'lvTrail';
+  trail.setAttribute('aria-hidden', 'true');
+
+  let ctx = null, varTargets = [];
+
+  function mountLayers() {
+    const body = document.body;
+    [grain, aberration, vignette, flash, auraBar, fx].forEach((el) => body.appendChild(el));
+    ctx = fx.getContext('2d');
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas, { passive: true });
+
+    const wrap = qs('#npArtWrap');
+    if (wrap && wrap.parentElement && !qs('#lvAuraNp')) {
+      const a = document.createElement('div');
+      a.id = 'lvAuraNp';
+      a.setAttribute('aria-hidden', 'true');
+      wrap.parentElement.insertBefore(a, wrap);
+    }
+    // Переменные пишем в несколько контейнеров, а не в :root —
+    // иначе каждый кадр пересчитывается стиль всего документа.
+    varTargets = ['#playerBar', '#nowPlaying', '#sidebar', '#lyricsBody']
+      .map((s) => qs(s)).filter(Boolean).concat([auraBar]);
+  }
+
+  function resizeCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    fx.width = Math.floor(innerWidth * dpr);
+    fx.height = Math.floor(innerHeight * dpr);
+    fx.style.width = innerWidth + 'px';
+    fx.style.height = innerHeight + 'px';
+    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  const varCache = new Map();
+  function setVar(name, value) {
+    if (varCache.get(name) === value) return;
+    varCache.set(name, value);
+    for (const el of varTargets) el.style.setProperty(name, value);
+  }
+
+  /* ============================================================
+     Анализ звука (+ синтетический ритм, если анализатор молчит)
+     ============================================================ */
+
+  const A = { bass: 0, mid: 0, hi: 0, rms: 0, energy: 0, beat: 0 };
+  const diag = { analyser: false, ctx: '—', source: 'нет', silentMs: 0, synth: false, sum: 0 };
+
+  let freqData = null;
+  const bassHistory = [];
+  let lastBeat = 0;
+  let lastGraphTry = 0;
+
+  /* Автоматическая нормализация (AGC). Без нее фиксированный множитель
+     упирался в потолок почти на любом треке: bass почти сразу становился
+     1.00 и оставался там — детектор бита сравнивает текущий удар со
+     средним (bass > avg*1.3), а если и текущее, и среднее упираются в
+     единицу, повышенных ударов просто не существует. Обложка, рамка и
+     волны из мини-обложки все завязаны на бит — поэтому не двигались.
+     Каждая полоса следит за своим недавним пиком: пик захватывается
+     мгновенно, потом медленно "остывает" (~5–8 c), а текущее значение
+     выражается как доля от него. Так и тихие, и громкие треки дают
+     полный диапазон 0..1 с реальными перепадами. */
+  const agc = { bass: 0.10, mid: 0.10, hi: 0.10, rms: 0.10 };
+  function agcNorm(raw, key, floor) {
+    if (raw > agc[key]) agc[key] = raw;
+    else agc[key] = Math.max(floor, agc[key] * 0.996);
+    return clamp(raw / agc[key], 0, 1);
+  }
+
+  function analyse(now) {
+    const playing = isPlaying();
+    let an = getAnalyser();
+
+    if (playing && (!an || diag.synth) && now - lastGraphTry > 1500) {
+      lastGraphTry = now;
+      ensureAudioGraph();
+      an = getAnalyser();
+    }
+    const c = getCtx();
+    diag.analyser = !!an;
+    diag.ctx = c ? c.state : '—';
+
+    if (!playing) {
+      decay();
+      diag.source = 'пауза';
+      diag.silentMs = 0;
+      diag.synth = false;
+      return;
+    }
+
+    let sum = 0;
+    if (an) {
+      if (!freqData || freqData.length !== an.frequencyBinCount) freqData = new Uint8Array(an.frequencyBinCount);
+      an.getByteFrequencyData(freqData);
+      for (let i = 0; i < freqData.length; i++) sum += freqData[i];
+      diag.sum = sum;
+    }
+
+    if (an && sum > 0) {
+      diag.silentMs = 0;
+      diag.synth = false;
+      diag.source = 'анализатор';
+      feedFromSpectrum(now, sum);
+      return;
+    }
+
+    // Анализатор есть, но отдаёт нули (или его нет вовсе)
+    diag.silentMs += 16;
+    diag.source = an ? 'анализатор молчит' : 'нет анализатора';
+    if (config.synth && diag.silentMs > 1200) {
+      diag.synth = true;
+      feedSynth(now);
+    } else {
+      decay();
+    }
+  }
+
+  function decay() {
+    A.bass = lerp(A.bass, 0, 0.06); A.mid = lerp(A.mid, 0, 0.06);
+    A.hi = lerp(A.hi, 0, 0.06); A.rms = lerp(A.rms, 0, 0.06);
+    A.energy = lerp(A.energy, 0, 0.02); A.beat *= 0.9;
+    // На паузе/смене трека отпускаем потолки AGC быстрее, чтобы следующий
+    // трек не наследовал громкость предыдущего.
+    agc.bass = Math.max(0.05, agc.bass * 0.985);
+    agc.mid = Math.max(0.05, agc.mid * 0.985);
+    agc.hi = Math.max(0.04, agc.hi * 0.985);
+    agc.rms = Math.max(0.05, agc.rms * 0.985);
+  }
+
+  function feedFromSpectrum(now, sum) {
+    let b = 0, m = 0, h = 0;
+    for (let i = 0; i < 6; i++) b += freqData[i];
+    for (let i = 6; i < 22; i++) m += freqData[i];
+    for (let i = 22; i < 56; i++) h += freqData[i];
+
+    const bassRaw = b / 6 / 255, midRaw = m / 16 / 255, hiRaw = h / 34 / 255, rmsRaw = sum / freqData.length / 255;
+    const bass = agcNorm(bassRaw, 'bass', 0.05);
+    A.bass = lerp(A.bass, bass, 0.35);
+    A.mid = lerp(A.mid, agcNorm(midRaw, 'mid', 0.05), 0.3);
+    A.hi = lerp(A.hi, agcNorm(hiRaw, 'hi', 0.04), 0.3);
+    A.rms = lerp(A.rms, agcNorm(rmsRaw, 'rms', 0.05), 0.12);
+    A.energy = lerp(A.energy, clamp(A.rms * 0.6 + A.mid * 0.25 + A.hi * 0.3, 0, 1), 0.01);
+    detectBeat(now, bass);
+  }
+
+  /** Псевдо-ритм ~112 BPM с лёгкой «дышащей» модуляцией. */
+  function feedSynth(now) {
+    const period = 60000 / 112;
+    const phase = (now % period) / period;
+    const env = Math.pow(1 - phase, 2.6);
+    const swell = 0.5 + Math.sin(now / 5200) * 0.18;
+    const bass = clamp(env * swell + 0.06, 0, 1);
+    A.bass = lerp(A.bass, bass, 0.3);
+    A.mid = lerp(A.mid, clamp(0.28 + Math.sin(now / 900) * 0.12, 0, 1), 0.08);
+    A.hi = lerp(A.hi, clamp(0.2 + Math.sin(now / 640) * 0.1, 0, 1), 0.08);
+    A.rms = lerp(A.rms, 0.34 + Math.sin(now / 3100) * 0.08, 0.05);
+    A.energy = lerp(A.energy, 0.42, 0.01);
+    detectBeat(now, bass);
+  }
+
+  const beatListeners = [];
+  function detectBeat(now, bass) {
+    bassHistory.push(bass);
+    if (bassHistory.length > 48) bassHistory.shift();
+    const avg = bassHistory.reduce((s, v) => s + v, 0) / bassHistory.length;
+    A.beat *= 0.86;
+    if (bass > avg * 1.3 && bass > 0.2 && now - lastBeat > 170) {
+      lastBeat = now;
+      const sensitivity = clamp(Number(config.beatSensitivity) || 2.2, 0.1, 8);
+      A.beat = clamp(bass * sensitivity, 0.3, 4);
+      for (const fn of beatListeners) safe(() => fn(clamp(A.beat, 0, 4)));
+    }
+  }
+
+  /* ============================================================
+     Канвас
+     ============================================================ */
+
+  const particles = [], ripples = [], orbits = [];
+
+  function maxParticles() {
+    if (quality === 2) return 0;
+    if (quality === 1) return 90;
+    return lowFx() ? 120 : 340;
+  }
+
+  function spawnParticle(p) {
+    const cap = maxParticles();
+    if (!cap) return;
+    if (particles.length >= cap) particles.shift();
+    particles.push(Object.assign({
+      x: 0, y: 0, vx: 0, vy: 0, life: 1, decay: 0.012,
+      size: 2, hue: hue(), alpha: 0.9, gravity: 0, drag: 0.985, target: null,
+    }, p));
+  }
+
+  function ripple(x, y, opts = {}) {
+    if (!ctx || quality >= 2 || ripples.length > 20) return;
+    ripples.push({
+      x, y, r: opts.r0 || 6, vr: opts.vr || 5.2, life: 1,
+      decay: opts.decay || 0.016, width: opts.width || 2,
+      hue: opts.hue != null ? opts.hue : hue(),
+      alpha: opts.alpha != null ? opts.alpha : 0.5,
+    });
+  }
+
+  function burst(x, y, count = 40, opts = {}) {
+    const h = opts.hue != null ? opts.hue : hue();
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      const sp = (opts.speed || 2.6) * (0.4 + Math.random());
+      spawnParticle({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        size: (opts.size || 2.2) * (0.5 + Math.random()),
+        hue: h + (Math.random() * 40 - 20),
+        decay: opts.decay || 0.014, gravity: opts.gravity || 0, alpha: 0.95,
+      });
+    }
+  }
+
+  function implode(x, y, count = 40, radius = 220, opts = {}) {
+    const h = opts.hue != null ? opts.hue : hue();
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = radius * (0.5 + Math.random() * 0.8);
+      spawnParticle({
+        x: x + Math.cos(a) * r, y: y + Math.sin(a) * r,
+        size: 1.6 + Math.random() * 2, hue: h + (Math.random() * 40 - 20),
+        decay: 0.011, alpha: 0.9, drag: 1,
+        target: { x, y, k: 0.045 + Math.random() * 0.035 },
+      });
+    }
+  }
+
+  function centerOf(el) {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    if (!r.width && !r.height) return null;
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+  }
+  const npOpen = () => { const np = qs('#nowPlaying'); return !!(np && !np.hidden); };
+  const coverCenter = () => npOpen() ? centerOf(qs('#npArtWrap')) : centerOf(qs('#playerCover'));
+
+  function drawFx() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, innerWidth, innerHeight);
+    if (quality >= 2) return;
+    const slow = paused ? 0.45 : 1;
+
+    for (let i = ripples.length - 1; i >= 0; i--) {
+      const r = ripples[i];
+      r.r += r.vr * slow; r.vr *= 0.985; r.life -= r.decay * slow;
+      if (r.life <= 0) { ripples.splice(i, 1); continue; }
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+      ctx.strokeStyle = `hsla(${hueCache}, 92%, 72%, ${r.life * r.alpha * 0.55})`;
+      ctx.lineWidth = r.width * r.life;
+      ctx.stroke();
+    }
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      if (p.target) {
+        p.vx += (p.target.x - p.x) * p.target.k;
+        p.vy += (p.target.y - p.y) * p.target.k;
+        p.vx *= 0.86; p.vy *= 0.86;
+      }
+      p.vy += p.gravity;
+      p.x += p.vx * slow; p.y += p.vy * slow;
+      p.vx *= p.drag; p.vy *= p.drag;
+      p.life -= p.decay * slow;
+      if (p.life <= 0) { particles.splice(i, 1); continue; }
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(0.2, p.size * p.life), 0, Math.PI * 2);
+      ctx.fillStyle = `hsla(${p.hue}, 92%, 70%, ${p.alpha * p.life})`;
+      ctx.fill();
+    }
+
+    if (quality === 0 && config.cursor) {
+      for (let i = orbits.length - 1; i >= 0; i--) {
+        const o = orbits[i];
+        const c = centerOf(o.el);
+        o.alpha = lerp(o.alpha, o.on ? 1 : 0, 0.08);
+        if (!c || o.alpha < 0.02) { if (!o.on) orbits.splice(i, 1); continue; }
+        const sens = clamp(Number(config.beatSensitivity) || 2.2, 0.1, 8);
+        const reactiveBass = clamp(A.bass * sens, 0, 3);
+        o.a += o.speed * slow * (1 + reactiveBass * 0.8);
+        const rad = (Math.max(c.w, c.h) / 2) * o.r + reactiveBass * 10;
+        ctx.beginPath();
+        ctx.arc(c.x + Math.cos(o.a) * rad, c.y + Math.sin(o.a) * rad * 0.62, o.size, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${hueCache + o.dh}, 95%, 76%, ${0.55 * o.alpha})`;
+        ctx.fill();
+      }
+    }
+
+  }
+
+  /* ============================================================
+     Обложка
+     ============================================================ */
+
+  const tilt = { tx: 0, ty: 0, x: 0, y: 0 };
+  const drag = { active: false, ox: 0, oy: 0, x: 0, y: 0, vx: 0, vy: 0, sx: 0, sy: 0 };
+
+  function initCover() {
+    const wrap = qs('#npArtWrap');
+    if (!wrap) return;
+    wrap.classList.add('lv-grab');
+    const stage = wrap.closest('.np-stage') || wrap.parentElement || document;
+
+    stage.addEventListener('pointermove', (e) => {
+      if (!config.cover) return;
+      const r = wrap.getBoundingClientRect();
+      if (!r.width) return;
+      tilt.tx = clamp(-((e.clientY - (r.top + r.height / 2)) / (r.height / 2)), -1, 1) * 4.5;
+      tilt.ty = clamp((e.clientX - (r.left + r.width / 2)) / (r.width / 2), -1, 1) * 4.5;
+    }, { passive: true });
+    stage.addEventListener('pointerleave', () => { tilt.tx = 0; tilt.ty = 0; }, { passive: true });
+
+    const hookOrbits = (el, n) => {
+      if (!el) return;
+      el.addEventListener('pointerenter', () => { if (config.cursor) startOrbits(el, n); });
+      el.addEventListener('pointerleave', () => stopOrbits(el));
+    };
+    hookOrbits(wrap, 10);
+    hookOrbits(qs('#playerCover'), 6);
+
+    wrap.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !config.cursor) return;
+      drag.active = true; drag.ox = e.clientX; drag.oy = e.clientY;
+      wrap.classList.add('lv-grabbing');
+      safe(() => wrap.setPointerCapture(e.pointerId));
+    });
+    wrap.addEventListener('pointermove', (e) => {
+      if (!drag.active) return;
+      drag.x = clamp((e.clientX - drag.ox) * 0.35, -70, 70);
+      drag.y = clamp((e.clientY - drag.oy) * 0.35, -70, 70);
+    });
+    const release = () => { if (drag.active) { drag.active = false; wrap.classList.remove('lv-grabbing'); } };
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => wrap.addEventListener(ev, release));
+
+    // Волны — только из мини-обложки, когда большой плеер закрыт
+    beatListeners.push((s) => {
+      if (!config.cover || lowFx() || quality > 0 || npOpen() || s < 0.42) return;
+      const c = centerOf(qs('#playerCover'));
+      if (!c) return;
+      ripple(c.x, c.y, { vr: 4 + s * 7, decay: 0.012 + (1 - s) * 0.01, width: 1.2 + s * 2.4, alpha: 0.28 + s * 0.35 });
+    });
+  }
+
+  function startOrbits(el, n = 10) {
+    if (quality > 0) return;
+    if (orbits.some((o) => o.el === el)) { orbits.forEach((o) => { if (o.el === el) o.on = true; }); return; }
+    const count = lowFx() ? Math.min(4, n) : n;
+    for (let i = 0; i < count; i++) {
+      orbits.push({
+        el, on: true, alpha: 0, a: (i / count) * Math.PI * 2,
+        r: 0.62 + Math.random() * 0.5, speed: 0.012 + Math.random() * 0.02,
+        size: 1.2 + Math.random() * 2, dh: Math.random() * 50 - 25,
+      });
+    }
+  }
+  const stopOrbits = (el) => orbits.forEach((o) => { if (o.el === el) o.on = false; });
+
+  function updateCoverTransform() {
+    const wrap = qs('#npArtWrap');
+    if (!wrap) return;
+    if (!npOpen()) {
+      if (wrap.style.transform) {
+        wrap.style.transform = '';
+        tilt.x = tilt.y = tilt.tx = tilt.ty = 0;
+        drag.sx = drag.sy = drag.vx = drag.vy = drag.x = drag.y = 0;
+      }
+      return;
+    }
+    const np = qs('#nowPlaying');
+    if (np.classList.contains('gsap-active')) return;
+    if (safe(() => window.gsap && gsap.isTweening(wrap))) return;
+
+    tilt.x = lerp(tilt.x, drag.active ? 0 : tilt.tx, 0.08);
+    tilt.y = lerp(tilt.y, drag.active ? 0 : tilt.ty, 0.08);
+    drag.vx += ((drag.active ? drag.x : 0) - drag.sx) * 0.14;
+    drag.vy += ((drag.active ? drag.y : 0) - drag.sy) * 0.14;
+    drag.vx *= 0.76; drag.vy *= 0.76;
+    drag.sx += drag.vx; drag.sy += drag.vy;
+
+    const sens = clamp(Number(config.beatSensitivity) || 2.2, 0.1, 8);
+    const reactiveBass = clamp(A.bass * sens, 0, 3);
+    const breathe = 1 + Math.sin(performance.now() / 1000 * 0.55) * 0.012 + reactiveBass * 0.05;
+    wrap.style.transform =
+      `translate3d(${drag.sx.toFixed(2)}px, ${drag.sy.toFixed(2)}px, 0) ` +
+      `rotateX(${tilt.x.toFixed(2)}deg) rotateY(${tilt.y.toFixed(2)}deg) scale(${breathe.toFixed(4)})`;
+  }
+
+  /* Живой текст удалён: заголовки и строки текста остаются статичными. */
+
+  /* ============================================================
+     Прогресс и глубина
+     ============================================================ */
+
+  function initDepth() {
+    const np = qs('#nowPlaying');
+    if (np) {
+      const sync = () => root.classList.toggle('lv-np', !np.hidden);
+      new MutationObserver(sync).observe(np, { attributes: true, attributeFilter: ['hidden'] });
+      sync();
+    }
+    const mark = () => ['.hero-grid', '.playlist-grid', '.artist-row']
+      .forEach((sel) => qsa(sel).forEach((g) => g.classList.add('lv-depth-grid')));
+    mark();
+    const content = qs('#content');
+    if (content) new MutationObserver(mark).observe(content, { childList: true, subtree: true });
+  }
+
+  let depthTick = 0;
+  function updateDepth() {
+    if (lowFx() || quality > 0) return;
+    if (depthTick++ % 12) return;
+    const mid = innerHeight * 0.42;
+    qsa('.lv-depth-grid > *').forEach((card) => {
+      const r = card.getBoundingClientRect();
+      if (r.bottom < -200 || r.top > innerHeight + 200) return;
+      card.style.setProperty('--lv-far', clamp(((r.top + r.height / 2) - mid) / (innerHeight * 0.9), 0, 1).toFixed(2));
+    });
+  }
+
+  /* ============================================================
+     Фон
+     ============================================================ */
+
+  let lastGrain = -1, lastAb = -1;
+  function updateBackground() {
+    const g = +(0.10 - A.rms * 0.06).toFixed(3);
+    if (Math.abs(g - lastGrain) > 0.004) { lastGrain = g; grain.style.opacity = String(g); }
+    const ab = quality > 0 ? 0 : +clamp((A.beat - 0.6) * 0.45, 0, 0.26).toFixed(3);
+    if (Math.abs(ab - lastAb) > 0.006) { lastAb = ab; aberration.style.opacity = String(ab); }
+    safe(() => {
+      if (window.__silk && typeof window.__silk.set === 'function') {
+        window.__silk.set({ speed: 0.7 + A.energy * 1.2, intensity: 0.85 + A.energy * 0.55, grain: A.energy * 0.12 });
+      }
+    });
+  }
+
+  /* ============================================================
+     Состояния и смена трека
+     ============================================================ */
+
+  let paused = true;
+  function setPaused(v) {
+    if (paused === v) return;
+    paused = v;
+    root.classList.toggle('lv-paused', v && config.states);
+  }
+
+  function flashStart() {
+    if (!config.states || reduceMotion.matches) return;
+    flash.classList.remove('on');
+    void flash.offsetWidth;
+    flash.classList.add('on');
+    setTimeout(() => flash.classList.remove('on'), 950);
+  }
+
+  function trackEndCeremony() {
+    if (!config.states) return;
+    const wrap = qs('#npArtWrap');
+    if (wrap) { wrap.classList.add('lv-fadeout'); setTimeout(() => wrap.classList.remove('lv-fadeout'), 1300); }
+    const pr = qs('#pbProgress');
+    if (pr) { pr.classList.add('lv-burn'); setTimeout(() => pr.classList.remove('lv-burn'), 1300); }
+    const c = coverCenter();
+    if (c && !lowFx()) {
+      for (let i = 0; i < 40; i++) {
+        spawnParticle({
+          x: c.x + (Math.random() - 0.5) * c.w, y: c.y + (Math.random() - 0.5) * c.h,
+          vx: (Math.random() - 0.5) * 0.8, vy: -(0.6 + Math.random() * 1.8),
+          size: 1 + Math.random() * 2.4, decay: 0.008, gravity: -0.006, alpha: 0.85,
+        });
+      }
+    }
+  }
+
+  let lastTrackKey = '';
+  function onTrackChange() {
+    // Track changes stay clean: no cover scattering/dissolve,
+    // no live-text animation, no progress tail and no listening trail.
+    flashStart();
+  }
+
+  function trackKey() {
+    const t = qs('#playerTitle'), a = qs('#playerArtist');
+    return ((t && (t.dataset.lvPlain || t.textContent)) || '') + '|' + ((a && a.textContent) || '');
+  }
+
+  function initTrackWatch() {
+    const bar = qs('#playerBar');
+    if (!bar) return;
+    lastTrackKey = trackKey();
+    new MutationObserver(() => {
+      const k = trackKey();
+      if (k === lastTrackKey || !k.replace('|', '')) return;
+      lastTrackKey = k;
+      safe(onTrackChange);
+    }).observe(bar, { subtree: true, childList: true, characterData: true });
+  }
+
+  /* ============================================================
+     Простой пользователя
+     ============================================================ */
+
+  let lastInteraction = performance.now();
+  let idleVal = 0;
+  function initInteraction() {
+    ['pointermove', 'keydown', 'pointerdown', 'wheel'].forEach((ev) =>
+      document.addEventListener(ev, () => { lastInteraction = performance.now(); }, { passive: true }));
+  }
+  function updateIdle() {
+    const idle = isPlaying() && (performance.now() - lastInteraction > 20000) ? 1 : 0;
+    idleVal = lerp(idleVal, idle, 0.05);
+    setVar('--lv-idle', idleVal.toFixed(2));
+  }
+
+  /* ============================================================
+     Мини-эффекты
+     ============================================================ */
+
+  function initExtras() {
+    document.addEventListener('click', (e) => {
+      if (!config.extras) return;
+      const fav = e.target.closest && e.target.closest('#pbFav, .track-fav');
+      if (!fav) return;
+      setTimeout(() => {
+        if (!fav.classList.contains('active')) return;
+        fav.classList.remove('lv-pop');
+        void fav.offsetWidth;
+        fav.classList.add('lv-pop');
+        setTimeout(() => fav.classList.remove('lv-pop'), 500);
+        const c = centerOf(fav);
+        if (c && !lowFx()) burst(c.x, c.y, 24, { speed: 2.2, decay: 0.028, size: 2, gravity: 0.04, hue: 350 });
+      }, 30);
+    }, true);
+
+    document.addEventListener('click', (e) => {
+      if (!config.extras) return;
+      const dl = e.target.closest && e.target.closest('.track-dl');
+      if (!dl) return;
+      const card = dl.closest('.track-row');
+      if (card) contour(card, null);
+    }, true);
+
+    ['#statTracks', '#statArtists', '#statDuration', '#statFavorites',
+      '#lstatPlays', '#lstatTime', '#lstatArtists', '#lstatTracks'].forEach(watchOdometer);
+  }
+
+  function contour(card, pct) {
+    if (!card) return;
+    let svg = card.querySelector(':scope > .lv-contour');
+    if (!svg) {
+      svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'lv-contour');
+      svg.setAttribute('preserveAspectRatio', 'none');
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('x', '1'); rect.setAttribute('y', '1'); rect.setAttribute('rx', '10');
+      svg.appendChild(rect);
+      card.appendChild(svg);
+    }
+    const r = card.getBoundingClientRect();
+    const rect = svg.firstChild;
+    svg.setAttribute('viewBox', `0 0 ${r.width} ${r.height}`);
+    rect.setAttribute('width', Math.max(1, r.width - 2));
+    rect.setAttribute('height', Math.max(1, r.height - 2));
+    const len = (r.width + r.height) * 2;
+    if (pct == null) {
+      rect.style.strokeDasharray = `${len * 0.22} ${len}`;
+      safe(() => rect.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: 1400, iterations: Infinity }));
+      const stop = setInterval(() => {
+        if (!card.isConnected || !card.querySelector('.track-dl')) { clearInterval(stop); svg.remove(); }
+      }, 700);
+      setTimeout(() => { clearInterval(stop); svg.remove(); }, 120000);
+    } else {
+      rect.style.strokeDasharray = `${len} ${len}`;
+      rect.style.strokeDashoffset = String(len * (1 - clamp(pct, 0, 1)));
+      if (pct >= 1) setTimeout(() => svg.remove(), 600);
+    }
+  }
+
+  const odoBusy = new WeakSet();
+  function watchOdometer(sel) {
+    const el = qs(sel);
+    if (!el) return;
+    let prev = el.textContent;
+    new MutationObserver(() => {
+      if (odoBusy.has(el) || !config.extras) { prev = el.textContent; return; }
+      const txt = el.textContent;
+      if (txt === prev) return;
+      prev = txt;
+      if (reduceMotion.matches) return;
+      odoBusy.add(el);
+      const wrapEl = document.createElement('span');
+      wrapEl.className = 'lv-odo';
+      [...txt].forEach((ch, i) => {
+        const s = document.createElement('i');
+        s.textContent = ch;
+        s.style.animationDelay = (i * 45) + 'ms';
+        wrapEl.appendChild(s);
+      });
+      el.textContent = '';
+      el.appendChild(wrapEl);
+      requestAnimationFrame(() => odoBusy.delete(el));
+    }).observe(el, { childList: true, characterData: true, subtree: true });
+  }
+
+  /* ============================================================
+     Аудио-события
+     ============================================================ */
+
+  function initAudioEvents() {
+    const attach = (el) => {
+      if (!el || el.__lvBound) return;
+      el.__lvBound = true;
+      el.addEventListener('play', () => { setPaused(false); ensureAudioGraph(); flashStart(); });
+      el.addEventListener('playing', ensureAudioGraph);
+      el.addEventListener('pause', () => setPaused(!isPlaying()));
+      el.addEventListener('ended', () => { setPaused(true); safe(trackEndCeremony); });
+    };
+    safe(() => attach(typeof audio !== 'undefined' ? audio : null));
+    safe(() => attach(typeof audioB !== 'undefined' ? audioB : null));
+    qsa('audio').forEach(attach);
+    ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, ensureAudioGraph, { passive: true }));
+  }
+
+  function initVinylWatch() {
+    const vinyl = qs('#vinylOverlay');
+    if (!vinyl) return;
+    const sync = () => root.classList.toggle('lv-vinyl', !vinyl.hidden);
+    new MutationObserver(sync).observe(vinyl, { attributes: true, attributeFilter: ['hidden'] });
+    sync();
+  }
+
+  /* ============================================================
+     Настройки: переключатели для каждой группы
+     ============================================================ */
+
+  function initSettingsUI() {
+    const panel = qs('#settingsContent');
+    if (!panel || qs('#lvSettingsGroup')) return;
+    const group = document.createElement('div');
+    group.className = 'settings-group';
+    group.id = 'lvSettingsGroup';
+    group.innerHTML =
+      '<h3>Живой интерфейс</h3>' +
+      '<p class="lv-settings-note">Реакция интерфейса на музыку. Каждый пункт включается отдельно и применяется сразу. ' +
+      'При падении FPS слой сам себя ужимает — текущее состояние видно в диагностике.</p>' +
+      GROUPS.map(([key, title, desc]) => key === 'beatSensitivity'
+        ? `<div class="lv-sensitivity"><div class="setting-row"><div><b>${title}</b><p>${desc}</p></div><output id="lvBeatOut">${Number(config.beatSensitivity || 2.2).toFixed(1)}×</output></div><div class="lv-range-row"><label for="lvBeatSensitivity">Реакция</label><output id="lvBeatOut2">${Number(config.beatSensitivity || 2.2).toFixed(1)}×</output><input id="lvBeatSensitivity" type="range" min="0.1" max="8" step="0.1" value="${Number(config.beatSensitivity || 2.2)}" /></div></div>`
+        : `<div class="setting-row">
+           <div><b>${title}</b><p>${desc}</p></div>
+           <button class="toggle" data-lv="${key}" type="button" role="switch" aria-label="${title}" aria-checked="false"></button>
+         </div>`).join('');
+
+    const groups = qsa('.settings-group', panel);
+    const anchor = groups.length ? groups[groups.length - 1] : null;
+    if (anchor && anchor.parentElement) anchor.parentElement.insertBefore(group, anchor.nextSibling);
+    else panel.appendChild(group);
+
+    group.addEventListener('click', (e) => {
+      const btn = e.target.closest('.toggle[data-lv]');
+      if (!btn) return;
+      const key = btn.dataset.lv;
+      config[key] = !config[key];
+      saveConfig();
+      applyConfig();
+      if (key === 'boot') safe(() => toast(config.boot ? 'Заставка включится при следующем запуске' : 'Заставка отключена', 'info', 2600));
+    });
+    const beatRange = group.querySelector('#lvBeatSensitivity');
+    const beatOut = group.querySelector('#lvBeatOut2');
+    if (beatRange) beatRange.addEventListener('input', () => {
+      config.beatSensitivity = Number(beatRange.value);
+      if (beatOut) beatOut.value = config.beatSensitivity.toFixed(1) + '×';
+      if (group.querySelector('#lvBeatOut')) group.querySelector('#lvBeatOut').textContent = config.beatSensitivity.toFixed(1) + '×';
+      saveConfig();
+    });
+    syncSettingsUI();
+  }
+
+  function syncSettingsUI() {
+    qsa('#lvSettingsGroup .toggle[data-lv]').forEach((btn) => {
+      const on = !!config[btn.dataset.lv];
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-checked', String(on));
+    });
+  }
+
+  /* ============================================================
+     Диагностика
+     ============================================================ */
+
+  let debugEl = null;
+  function toggleDebug(on) {
+    if (on && !debugEl) {
+      debugEl = document.createElement('div');
+      debugEl.id = 'lvDebug';
+      debugEl.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(debugEl);
+    } else if (!on && debugEl) {
+      debugEl.remove();
+      debugEl = null;
+    }
+  }
+
+  let debugTick = 0;
+  function updateDebug() {
+    if (!debugEl || debugTick++ % 6) return;
+    debugEl.innerHTML =
+      `<b>Living UI ${LV_VERSION}</b>\n` +
+      `fps ${Math.round(1000 / frameAvg)}   качество ${quality}\n` +
+      `источник: ${diag.source}${diag.synth ? ' → синтетика' : ''}\n` +
+      `analyser ${diag.analyser ? 'есть' : 'нет'}   ctx ${diag.ctx}   сумма ${diag.sum}\n` +
+      `bass ${A.bass.toFixed(2)}  beat ${A.beat.toFixed(2)}  energy ${A.energy.toFixed(2)}\n` +
+      `AGC-потолок баса: ${agc.bass.toFixed(2)}` +
+      `<span class="lv-meter" style="width:${Math.round(A.bass * 180)}px"></span>`;
+  }
+
+  /* ============================================================
+     Волны от мини-обложки
+     ============================================================ */
+
+  let pbWaveCtx = null, pbWaveW = 0, pbWaveH = 0;
+  function resizePbWaves() {
+    const c = qs('#pbCoverWaves');
+    if (!c) return;
+    const r = c.getBoundingClientRect();
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    pbWaveW = Math.max(1, r.width); pbWaveH = Math.max(1, r.height);
+    c.width = Math.floor(pbWaveW * dpr); c.height = Math.floor(pbWaveH * dpr);
+    pbWaveCtx = c.getContext('2d'); pbWaveCtx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  function drawPbWaves(now) {
+    const c = qs('#pbCoverWaves');
+    const bar = qs('#playerBar');
+    if (!c || !bar || bar.hidden) return;
+    if (!pbWaveCtx || Math.abs(pbWaveW - c.clientWidth) > 2 || Math.abs(pbWaveH - c.clientHeight) > 2) resizePbWaves();
+    const x0 = Math.min(120, Math.max(64, (qs('#playerCover')?.getBoundingClientRect().right || 76) - bar.getBoundingClientRect().left + 8));
+    const beat = clamp(A.beat * 0.34, 0, 2.2);
+    const amp = 2.5 + A.bass * 5 + beat * 9;
+    pbWaveCtx.clearRect(0,0,pbWaveW,pbWaveH);
+    for (let lane=0; lane<3; lane++) {
+      pbWaveCtx.beginPath();
+      const base = pbWaveH * (0.28 + lane*0.22);
+      for (let x=x0; x<pbWaveW+20; x+=4) {
+        const travel=(x-x0)/Math.max(1,pbWaveW-x0);
+        const y=base + Math.sin(x*0.025 - now*0.0045 - lane*0.9) * amp * (0.35 + travel*0.8);
+        if(x===x0) pbWaveCtx.moveTo(x,y); else pbWaveCtx.lineTo(x,y);
+      }
+      pbWaveCtx.strokeStyle=`hsla(${hue()},88%,70%,${0.12 + A.bass*0.16 + beat*0.08})`;
+      pbWaveCtx.lineWidth=1.1 + beat*0.35; pbWaveCtx.stroke();
+    }
+  }
+  addEventListener('resize', resizePbWaves, {passive:true});
+
+  /* ============================================================
+     Цикл
+     ============================================================ */
+
+  const LV_VERSION = '1.2.0';
+  let raf = 0, last = performance.now(), lastTick = performance.now();
+  let frameAvg = 16, quality = 0, qualitySince = performance.now();
+
+  function governor(now, dt) {
+    frameAvg = frameAvg * 0.92 + dt * 0.08;
+    if (frameAvg > 34 && quality < 2 && now - qualitySince > 2500) {
+      quality++; qualitySince = now;
+      if (quality >= 2) { particles.length = 0; ripples.length = 0; orbits.length = 0; }
+    } else if (frameAvg < 19 && quality > 0 && now - qualitySince > 8000) {
+      quality--; qualitySince = now;
+    }
+  }
+
+  function frame(now) {
+    raf = requestAnimationFrame(frame);
+    const dt = Math.min(64, now - last);
+    last = now; lastTick = now;
+    governor(now, dt);
+
+    safe(refreshHue);
+    safe(() => analyse(now));
+    safe(() => setPaused(!isPlaying()));
+
+    const sens = clamp(Number(config.beatSensitivity) || 2.2, 0.1, 8);
+    const reactiveBass = clamp(A.bass * sens, 0, 3);
+    setVar('--lv-bass', reactiveBass.toFixed(2));
+    setVar('--lv-beat', clamp(A.beat, 0, 4).toFixed(2));
+    setVar('--lv-energy', A.energy.toFixed(2));
+    setVar('--lv-ring-in', reactiveBass.toFixed(2));
+    setVar('--lv-ring-out', A.rms.toFixed(2));
+    setVar('--lv-pbcover', config.cover ? (1 + reactiveBass * 0.06).toFixed(3) : '1');
+
+    if (config.cover) safe(updateCoverTransform);
+    if (config.aura) {
+      const bar = qs('#playerBar');
+      auraBar.style.opacity = bar && !bar.hidden ? '1' : '0';
+    }
+    if (config.depth) safe(updateDepth);
+    if (config.bg) safe(updateBackground);
+    safe(updateIdle);
+    safe(drawFx);
+    safe(updateDebug);
+    safe(() => drawPbWaves(now));
+  }
+
+  function start() { if (!raf) { last = lastTick = performance.now(); raf = requestAnimationFrame(frame); } }
+  function stop() { if (raf) cancelAnimationFrame(raf); raf = 0; }
+
+  setInterval(() => {
+    if (document.hidden) return;
+    if (performance.now() - lastTick > 2000) { raf = 0; start(); }   // сторож
+  }, 2000);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); else start(); });
+
+  /* ============================================================
+     Старт
+     ============================================================ */
+
+  function init() {
+    safe(mountLayers);
+    safe(initCover);
+    safe(initDepth);
+    safe(initInteraction);
+    safe(initExtras);
+    safe(initTrackWatch);
+    safe(initAudioEvents);
+    safe(initVinylWatch);
+    safe(initSettingsUI);
+    safe(applyConfig);
+    start();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+
+  window.LivingUI = {
+    config, audio: A, diag,
+    set(key, value) { config[key] = !!value; saveConfig(); applyConfig(); },
+    ripple, burst, implode, contour,
+    onBeat(fn) { beatListeners.push(fn); },
+    start, stop, ensureAudioGraph,
+    get quality() { return quality; },
+    get fps() { return Math.round(1000 / frameAvg); },
+    version: LV_VERSION,
+  };
+})();
+
+
+/* ============================================================
+   Umbrella Player — стартовая заставка
+   Встроена в экран запуска (#loginView): сперва свет собирается
+   из пыли, потом проявляется обычный launch-экран с кнопкой.
+   Включается/выключается в Настройках → Живой интерфейс.
+   ============================================================ */
+
+(() => {
+  'use strict';
+  if (window.__umbrellaBoot) return;
+  window.__umbrellaBoot = true;
+
+  let enabled = true;
+  try {
+    const saved = JSON.parse(localStorage.getItem('umbrella_living') || '{}');
+    if (saved && saved.boot === false) enabled = false;
+  } catch (e) {}
+  if (!enabled) return;
+
+  const reduce = (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) || false;
+
+  const run = () => {
+    const view = document.getElementById('loginView');
+    if (!view || view.hidden) return;              // плеер уже открыт — заставка не нужна
+    if (view.querySelector('#bootCanvas')) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.id = 'bootCanvas';
+    canvas.setAttribute('aria-hidden', 'true');
+    view.insertBefore(canvas, view.firstChild);
+
+    const word = document.createElement('div');
+    word.className = 'boot-word';
+    word.setAttribute('aria-hidden', 'true');
+    word.innerHTML = '<b>' + [...'UMBRELLA'].map((c, i) =>
+      `<i style="animation-delay:${2600 + i * 55}ms">${c}</i>`).join('') + '</b><small>umbrella player</small>';
+    view.appendChild(word);
+
+    view.classList.add('boot-run');
+
+    const ctx = canvas.getContext('2d');
+    let W = 0, H = 0;
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const r = view.getBoundingClientRect();
+      W = r.width; H = r.height;
+      canvas.width = Math.floor(W * dpr);
+      canvas.height = Math.floor(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    resize();
+    addEventListener('resize', resize, { passive: true });
+
+    const COUNT = reduce ? 60 : Math.min(460, Math.round(W * 0.32) || 260);
+    const parts = [];
+    for (let i = 0; i < COUNT; i++) {
+      const a = Math.random() * Math.PI * 2;
+      parts.push({
+        a,
+        br: Math.pow(Math.random(), 0.6) * Math.max(W, H) * 0.62,
+        size: 0.5 + Math.random() * 1.6,
+        drift: (Math.random() - 0.5) * 0.0016,
+        delay: Math.random() * 0.35,
+        warm: Math.random() < 0.12,
+      });
+    }
+
+    const T = reduce
+      ? { dust: 150, pull: 350, flash: 450, title: 600, out: 1000 }
+      : { dust: 900, pull: 2150, flash: 2380, title: 3550, out: 4300 };
+
+    const start = performance.now();
+    let raf = 0, done = false;
+    const easeIn = (t) => t * t * t;
+    const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+
+    chime();
+
+    function loop(now) {
+      raf = requestAnimationFrame(loop);
+      const t = now - start;
+      const cx = W / 2, cy = H / 2;
+      ctx.clearRect(0, 0, W, H);
+      // Transparent canvas: the launch surface remains the same screen throughout the animation.
+
+      const appear = Math.min(1, t / T.dust);
+      const pull = t < T.dust ? 0 : Math.min(1, (t - T.dust) / (T.pull - T.dust));
+
+      for (const p of parts) {
+        p.a += p.drift * (1 + pull * 22);
+        const k = easeIn(Math.max(0, pull - p.delay) / (1 - p.delay || 1));
+        const r = p.br * (1 - k * 0.995);
+        const alpha = appear * (0.25 + k * 0.75);
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(p.a) * r, cy + Math.sin(p.a) * r * 0.86, p.size * (1 + k * 0.7), 0, Math.PI * 2);
+        ctx.fillStyle = p.warm ? `rgba(198,214,255,${alpha * 0.9})` : `rgba(255,255,255,${alpha * 0.75})`;
+        ctx.fill();
+      }
+
+      if (pull > 0.15) {
+        const core = easeIn((pull - 0.15) / 0.85);
+        const rad = 4 + core * 90;
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+        g.addColorStop(0, `rgba(255,255,255,${0.85 * core})`);
+        g.addColorStop(0.35, `rgba(190,205,255,${0.35 * core})`);
+        g.addColorStop(1, 'rgba(120,140,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
+
+        const lw = core * W * 0.62;
+        const lg = ctx.createLinearGradient(cx - lw / 2, 0, cx + lw / 2, 0);
+        lg.addColorStop(0, 'rgba(255,255,255,0)');
+        lg.addColorStop(0.5, `rgba(255,255,255,${0.75 * core})`);
+        lg.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = lg;
+        ctx.fillRect(cx - lw / 2, cy - 0.9, lw, 1.8);
+      }
+
+      if (t > T.pull) {
+        if (t < T.flash) {
+          ctx.fillStyle = `rgba(255,255,255,${0.9 * (1 - (t - T.pull) / (T.flash - T.pull))})`;
+          ctx.fillRect(0, 0, W, H);
+        }
+        const ringT = Math.min(1, (t - T.pull) / 900);
+        if (ringT < 1) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, easeOut(ringT) * Math.max(W, H) * 0.7, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(200,215,255,${0.5 * (1 - ringT)})`;
+          ctx.lineWidth = 2 * (1 - ringT) + 0.4;
+          ctx.stroke();
+        }
+        const sT = Math.min(1, (t - T.pull) / 1400);
+        if (sT < 1 && !reduce) {
+          for (let i = 0; i < 26; i++) {
+            const a = (i / 26) * Math.PI * 2 + i * 0.13;
+            const r0 = easeOut(sT) * 260, r1 = r0 + 60 * (1 - sT);
+            ctx.beginPath();
+            ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0 * 0.9);
+            ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1 * 0.9);
+            ctx.strokeStyle = `rgba(255,255,255,${0.35 * (1 - sT)})`;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+        }
+      }
+
+      if (t > T.title) finish();
+    }
+
+    /** Заставка растворяется, обычный launch-экран проявляется поверх. */
+    function finish() {
+      if (done) return;
+      done = true;
+      cancelAnimationFrame(raf);
+      word.classList.add('boot-gone');
+      canvas.classList.add('boot-fade');
+      view.classList.add('boot-lit');
+      setTimeout(() => {
+        canvas.remove();
+        word.remove();
+        view.classList.remove('boot-run', 'boot-lit');
+      }, 1400);
+      removeEventListener('resize', resize);
+      document.removeEventListener('pointerdown', finish, true);
+      document.removeEventListener('keydown', finish, true);
+    }
+
+    document.addEventListener('pointerdown', finish, true);
+    document.addEventListener('keydown', finish, true);
+    raf = requestAnimationFrame(loop);
+    setTimeout(finish, T.out + 2000);   // страховка от залипания
+  };
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
+  else run();
+
+  /** Короткий нарастающий тон, если браузер разрешил звук без жеста. */
+  function chime() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      const c = new AC();
+      if (c.state === 'suspended') { c.close(); return; }
+      const now = c.currentTime;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(0.08, now + 1.8);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 3.4);
+      g.connect(c.destination);
+      [110, 220, 329.6, 440].forEach((f, i) => {
+        const o = c.createOscillator();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(f * 0.995, now);
+        o.frequency.linearRampToValueAtTime(f, now + 2.1);
+        const og = c.createGain();
+        og.gain.value = 1 / (i + 1.4);
+        o.connect(og); og.connect(g);
+        o.start(now); o.stop(now + 3.6);
+      });
+      setTimeout(() => safeClose(c), 4000);
+    } catch (e) {}
+    function safeClose(c) { try { c.close(); } catch (e) {} }
   }
 })();

@@ -1645,6 +1645,8 @@ body.lib-wide .artist-row { grid-template-columns: repeat(auto-fill, minmax(110p
 
 /* ---------- Player bar ---------- */
 .player-bar {
+  overflow: hidden;
+
   position: fixed;
   z-index: 25;
   left: 0; right: 0; bottom: 0;
@@ -2021,8 +2023,7 @@ body.lib-wide .artist-row { grid-template-columns: repeat(auto-fill, minmax(110p
   box-shadow: 0 44px 100px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.06), 0 0 var(--np-cover-glow, 28px) hsla(var(--dyn-h), 78%, 62%, 0.2);
   transition: box-shadow 120ms ease-out, transform 120ms ease-out;
 }
-.np-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.8; }
-.np-art { position: absolute; inset: 0; background: var(--cover, linear-gradient(135deg, hsl(var(--dyn-h), 65%, 45%), hsl(calc(var(--dyn-h) + 50), 65%, 32%))); mix-blend-mode: overlay; opacity: 0.6; }
+.np-art { position: absolute; inset: 0; background: var(--cover, linear-gradient(135deg, hsl(var(--dyn-h), 65%, 45%), hsl(calc(var(--dyn-h) + 50), 65%, 32%))); background-position: center; background-size: cover; background-repeat: no-repeat; opacity: 1; }
 .np-art-custom { position: absolute; inset: 0; }
 .np-art-custom img, .np-art-custom video { width: 100%; height: 100%; object-fit: cover; }
 .np-art-shine {
@@ -3915,3 +3916,346 @@ body:not(.app-on) .content{padding:0!important;max-width:none!important}
 /* Perf: low-fx mode kills backdrop blur + ambient canvas (weak GPUs) */
 body.low-fx #ambient{display:none!important}
 body.low-fx .sidebar,body.low-fx .player-bar,body.low-fx .modal-card,body.low-fx .toast,body.low-fx .stats article,body.low-fx .rec-close{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+
+
+/* ============================================================
+   Umbrella Player — Living UI v1.2
+   Реактивный слой. Каждая группа эффектов включается своим классом
+   на <html>: lv-cover / lv-aura / lv-text / lv-micro / lv-depth /
+   lv-trail / lv-bg / lv-states / lv-cursor / lv-extras.
+   Классы ставит и снимает код в app2.js (раздел Living UI).
+   ============================================================ */
+
+:root {
+  --lv-bass: 0;
+  --lv-beat: 0;
+  --lv-energy: 0;
+  --lv-ring-in: 0;
+  --lv-ring-out: 0;
+  --lv-idle: 0;
+  --lv-pbcover: 1;
+}
+
+/* ---------- Глобальные слои ---------- */
+
+#lvFx {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  pointer-events: none;
+  display: block;
+}
+
+.lv-layer { position: fixed; inset: 0; pointer-events: none; z-index: 58; }
+.lv-vinyl #lvGrain, .lv-vinyl #lvAberration, .lv-vinyl #lvVignette { display: none; }
+
+#lvGrain {
+  background-image: url("noise.png");
+  background-repeat: repeat;
+  background-size: 180px 180px;
+  opacity: .05;
+  mix-blend-mode: overlay;
+  transition: opacity .5s linear;
+  z-index: 57;
+}
+
+#lvAberration {
+  z-index: 59;
+  opacity: 0;
+  mix-blend-mode: screen;
+  background:
+    linear-gradient(90deg, rgba(255, 40, 80, .38), transparent 16%),
+    linear-gradient(270deg, rgba(40, 160, 255, .38), transparent 16%),
+    linear-gradient(0deg, rgba(120, 60, 255, .2), transparent 14%);
+}
+
+#lvVignette {
+  z-index: 56;
+  opacity: 0;
+  background: radial-gradient(ellipse 120% 100% at 50% 50%, transparent 38%, rgba(0, 0, 0, .55) 100%);
+  transition: opacity .9s var(--ease, ease);
+}
+.lv-paused #lvVignette { opacity: 1; }
+
+#lvFlash {
+  z-index: 61;
+  opacity: 0;
+  background: radial-gradient(circle at 50% 78%, hsla(var(--dyn-h), 90%, 62%, .5), transparent 62%);
+}
+#lvFlash.on { animation: lvFlash 900ms cubic-bezier(.16, 1, .3, 1) forwards; }
+@keyframes lvFlash {
+  0% { opacity: 0; transform: scale(1.12); }
+  14% { opacity: .85; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.04); }
+}
+
+/* ---------- 1. Живая обложка ---------- */
+
+.lv-cover .pb-cover {
+  transform: scale(var(--lv-pbcover, 1));
+  transition: box-shadow .25s var(--ease, ease);
+}
+.lv-cover .pb-cover:hover { transform: scale(calc(var(--lv-pbcover, 1) * 1.06)); }
+
+.lv-cover .np-stage { perspective: 1400px; position: relative; }
+.lv-cover .np-art-wrap { will-change: transform, box-shadow; }
+.lv-cursor .np-art-wrap.lv-grab { cursor: grab; }
+.lv-cursor .np-art-wrap.lv-grabbing { cursor: grabbing; }
+
+.lv-states .np-art-wrap.lv-fadeout { animation: lvFadeOut 1.1s ease-in forwards; }
+@keyframes lvFadeOut {
+  from { filter: brightness(1); }
+  to { filter: brightness(.06) saturate(.2); }
+}
+
+/* ---------- 2. Энергетическое поле ---------- */
+
+#lvAuraBar {
+  position: fixed;
+  left: 10px; right: 10px;
+  bottom: 0;
+  height: var(--pb-h, 84px);
+  border-radius: 24px 24px 0 0;
+  pointer-events: none;
+  z-index: 24;
+  opacity: 0;
+  box-shadow:
+    0 0 calc(10px + var(--lv-ring-in) * 34px) hsla(var(--dyn-h), 92%, 62%, calc(.10 + var(--lv-ring-in) * .35)),
+    0 0 calc(30px + var(--lv-ring-out) * 90px) hsla(calc(var(--dyn-h) + 34), 88%, 58%, calc(.05 + var(--lv-ring-out) * .20));
+  border-top: 1px solid hsla(var(--dyn-h), 92%, 68%, calc(.12 + var(--lv-ring-in) * .5));
+  transition: opacity .8s var(--ease, ease);
+}
+#lvAuraNp {
+  position: absolute;
+  inset: -4% -3%;
+  border-radius: 42px;
+  pointer-events: none;
+  z-index: 0;
+  border: 1px solid hsla(var(--dyn-h), 92%, 70%, calc(.10 + var(--lv-ring-in) * .45));
+  box-shadow:
+    0 0 calc(18px + var(--lv-ring-in) * 60px) hsla(var(--dyn-h), 92%, 62%, calc(.10 + var(--lv-ring-in) * .32)),
+    0 0 calc(60px + var(--lv-ring-out) * 150px) hsla(calc(var(--dyn-h) + 40), 88%, 58%, calc(.04 + var(--lv-ring-out) * .16));
+  transform: scale(calc(1 + var(--lv-ring-out) * .02));
+  transition: opacity .8s var(--ease, ease);
+}
+.lv-paused #lvAuraBar { opacity: .35 !important; }
+.lv-paused #lvAuraNp { opacity: .35; }
+
+/* Живой текст удалён. */
+
+/* Микро-пульсации кнопок, времени и хвост прогресса удалены. */
+
+/* ---------- 5. Глубина ---------- */
+
+.lv-depth .dashboard { transition: filter .45s var(--ease, ease), transform .45s var(--ease, ease); }
+.lv-depth.lv-np .dashboard { filter: blur(16px) saturate(.9); transform: scale(.955); }
+
+.lv-depth .track-list { perspective: 1200px; }
+.lv-depth .track-row {
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform .28s var(--ease-out, ease), box-shadow .28s var(--ease, ease), background .2s ease;
+}
+.lv-depth .track-row:hover {
+  transform: translateZ(26px) translateY(-2px);
+  box-shadow: 0 18px 38px rgba(0, 0, 0, .45), 0 1px 0 rgba(255, 255, 255, .06) inset;
+}
+.lv-depth .track-row::after {
+  content: "";
+  position: absolute;
+  left: 8px; right: 8px; bottom: -14px;
+  height: 14px;
+  border-radius: 0 0 12px 12px;
+  background: linear-gradient(180deg, hsla(var(--dyn-h), 70%, 60%, .16), transparent);
+  opacity: 0;
+  transform: scaleY(.4);
+  transform-origin: top;
+  transition: opacity .28s var(--ease, ease), transform .28s var(--ease, ease);
+  pointer-events: none;
+}
+.lv-depth .track-row:hover::after { opacity: 1; transform: scaleY(1); }
+
+.lv-depth .lv-depth-grid > * {
+  transform: scale(calc(1 - var(--lv-far, 0) * .035)) translateY(calc(var(--lv-far, 0) * 6px));
+  filter: blur(calc(var(--lv-far, 0) * 1.6px));
+  opacity: calc(1 - var(--lv-far, 0) * .22);
+  transition: transform .5s var(--ease-out, ease), filter .5s linear, opacity .5s linear;
+}
+
+.lv-states .pb-progress.lv-burn i { animation: lvBurn 1.2s ease-in forwards; }
+@keyframes lvBurn {
+  0% { filter: brightness(1) saturate(1.6); }
+  55% { filter: brightness(2.2) saturate(2.4); }
+  100% { filter: brightness(.2) saturate(.2); opacity: .2; }
+}
+
+.lv-paused.lv-states .np-art-wrap { filter: saturate(.82) brightness(.92); }
+
+/* ---------- 10. Мини-эффекты ---------- */
+
+.lv-extras .pb-fav.lv-pop,
+.lv-extras .track-fav.lv-pop { animation: lvPop 460ms cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes lvPop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.38); }
+  100% { transform: scale(1); }
+}
+
+.lv-contour { position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; z-index: 3; }
+.lv-contour rect {
+  fill: none;
+  stroke: hsl(var(--dyn-h), 92%, 66%);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 6px hsla(var(--dyn-h), 95%, 62%, .7));
+}
+
+.lv-odo { display: inline-flex; overflow: hidden; vertical-align: baseline; }
+.lv-odo i { font-style: normal; display: inline-block; animation: lvOdo 420ms cubic-bezier(.16, 1, .3, 1) both; }
+@keyframes lvOdo {
+  0% { transform: translateY(.7em); opacity: 0; filter: blur(4px); }
+  100% { transform: none; opacity: 1; filter: none; }
+}
+
+/* ---------- Диагностика ---------- */
+
+#lvDebug {
+  position: fixed;
+  left: 12px;
+  top: 12px;
+  z-index: 100001;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid hsla(var(--dyn-h), 70%, 65%, .35);
+  background: rgba(8, 8, 14, .88);
+  backdrop-filter: blur(10px);
+  font: 500 11px/1.55 ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  color: #cfd3e4;
+  white-space: pre;
+  pointer-events: none;
+}
+#lvDebug b { color: hsl(var(--dyn-h), 85%, 72%); font-weight: 700; }
+#lvDebug .lv-meter {
+  display: block;
+  height: 4px;
+  margin-top: 5px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, hsl(var(--dyn-h), 90%, 62%), hsl(calc(var(--dyn-h) + 50), 90%, 66%));
+  transition: width .06s linear;
+}
+
+/* ---------- Настройки: живой интерфейс ---------- */
+
+.lv-settings-note {
+  margin: -2px 0 12px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.lv-settings-note b { color: var(--text-2); font-weight: 600; }
+
+/* ---------- Стартовая заставка (внутри launch-view) ---------- */
+
+.launch-view.boot-run { background: #000; }
+#bootCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 1;
+  transition: opacity 1.1s ease;
+}
+#bootCanvas.boot-fade { opacity: 0; }
+
+.launch-view.boot-run .launch-orbs,
+.launch-view.boot-run .launch-inner { opacity: 0; }
+.launch-view.boot-run .launch-inner > * { animation: none !important; }
+
+.launch-view.boot-lit .launch-orbs { opacity: 1; transition: opacity 1.4s ease; }
+.launch-view.boot-lit .launch-inner {
+  opacity: 1;
+  animation: bootRise 1s cubic-bezier(.16, 1, .3, 1) both;
+}
+@keyframes bootRise {
+  0% { opacity: 0; transform: translateY(14px) scale(.985); filter: blur(10px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+
+.boot-word {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  text-align: center;
+  color: #fff;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity .8s ease, transform .9s cubic-bezier(.16, 1, .3, 1), filter .8s ease;
+}
+.boot-word.boot-gone { opacity: 0; transform: translate(-50%, -54%) scale(1.03); filter: blur(8px); }
+.boot-word b {
+  display: block;
+  font: 300 clamp(24px, 5vw, 58px)/1 var(--font-display, sans-serif);
+  letter-spacing: .42em;
+  text-indent: .42em;
+  white-space: nowrap;
+}
+.boot-word b i {
+  font-style: normal;
+  display: inline-block;
+  opacity: 0;
+  animation: bootChar 900ms cubic-bezier(.16, 1, .3, 1) both;
+}
+@keyframes bootChar {
+  0% { opacity: 0; transform: translateY(6px) scale(1.14); filter: blur(8px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+.boot-word small {
+  display: block;
+  margin-top: 15px;
+  font: 500 clamp(9px, 1.1vw, 12px)/1 var(--font-body, sans-serif);
+  letter-spacing: .58em;
+  text-indent: .58em;
+  color: rgba(255, 255, 255, .42);
+  animation: bootSub 1.2s ease 420ms both;
+}
+@keyframes bootSub {
+  from { opacity: 0; letter-spacing: .3em; }
+  to { opacity: 1; letter-spacing: .58em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-word b i { animation: none !important; }
+  .lv-depth .track-row:hover { transform: none; }
+  #lvFx, #lvGrain, #lvAberration { display: none; }
+}
+
+/* Beat waves emitted from the mini cover */
+.pb-cover-waves {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+  opacity: .92;
+  mix-blend-mode: screen;
+}
+.player-bar > *:not(.pb-cover-waves):not(.pb-led) { position: relative; z-index: 2; }
+.player-bar .pb-cover-waves { z-index: 1; }
+
+/* Startup animation stays on the same launch surface; no black-to-new-screen flash. */
+.launch-view.boot-run { background: var(--surface-0, #08090d); }
+#bootCanvas { background: transparent; }
+.launch-view.boot-run .launch-orbs { opacity: .18; }
+.launch-view.boot-lit .launch-orbs { opacity: 1; }
+
+.lv-sensitivity { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.07); }
+.lv-range-row { display:grid; grid-template-columns: minmax(0,1fr) auto; gap:10px 14px; align-items:center; margin-top:10px; }
+.lv-range-row label { font-size:12px; color:var(--text-2); }
+.lv-range-row output { min-width:48px; text-align:right; font:600 12px ui-monospace,monospace; color:var(--text-1); }
+.lv-range-row input[type=range] { grid-column:1 / -1; width:100%; accent-color:hsl(var(--dyn-h),85%,62%); }
