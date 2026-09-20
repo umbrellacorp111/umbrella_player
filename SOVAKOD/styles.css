@@ -1865,128 +1865,15 @@ body.lib-wide .artist-row { grid-template-columns: repeat(auto-fill, minmax(110p
   overflow: hidden;
 }
 
-.ps5-particle {
+.ps5-canvas {
   position: absolute;
-  width: 2px;
-  height: 2px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.5);
-  box-shadow: 0 0 3px rgba(255, 255, 255, 0.4);
-  pointer-events: none;
-  will-change: transform, opacity;
-}
-
-.ps5-pause-particle {
-  position: absolute;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 0 7px rgba(255, 255, 255, 0.95), 0 0 18px hsla(var(--dyn-h), 85%, 72%, 0.75);
-  pointer-events: none;
-  z-index: 1;
-  will-change: transform, opacity;
-}
-
-/* Частицы плавают по экрану (не исчезают) */
-@keyframes particleDrift {
-  0% {
-    transform: translate(0, 0);
-    opacity: 0;
-  }
-  5% {
-    opacity: 0.6;
-  }
-  95% {
-    opacity: 0.5;
-  }
-  100% {
-    transform: translate(var(--dx), var(--dy));
-    opacity: 0.6;
-  }
-}
-
-/* Разлет при открытии плеера */
-@keyframes particleBurst {
-  0% {
-    transform: translate(0, 0) scale(0);
-    opacity: 0;
-  }
-  20% {
-    opacity: 0.8;
-  }
-  100% {
-    transform: translate(var(--tx), var(--ty)) scale(0.3);
-    opacity: 0;
-  }
-}
-
-/* Сборка в центр при закрытии */
-@keyframes particleGather {
-  0% {
-    transform: translate(var(--tx), var(--ty)) scale(1);
-    opacity: 0.6;
-  }
-  100% {
-    transform: translate(0, 0) scale(0);
-    opacity: 0;
-  }
-}
-
-/* Сборка в кнопку при паузе (частицы остаются видимыми) */
-@keyframes particleGatherButton {
-  0% {
-    opacity: 0.6;
-  }
-  100% {
-    transform: translate(var(--tx), var(--ty)) scale(0.5);
-    opacity: 0.8;
-  }
-}
-
-/* Разлет из кнопки при play */
-@keyframes particleScatterButton {
-  0% {
-    transform: translate(var(--tx), var(--ty)) scale(0.5);
-    opacity: 0.8;
-  }
-  100% {
-    transform: translate(0, 0) scale(1);
-    opacity: 0.6;
-  }
-}
-
-/* "Божественное свечение" из левого верхнего угла на обложку */
-.ps5-god-rays {
-  position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
   pointer-events: none;
-  overflow: hidden;
+  z-index: 2;
 }
 
-.ps5-light-ray {
-  position: absolute;
-  top: 0;
-  left: 0;
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.34) 0%,
-    rgba(255, 255, 255, 0.13) 42%,
-    transparent 100%
-  );
-  transform-origin: 0 0;
-  pointer-events: none;
-  filter: blur(5px);
-  animation: rayDrift var(--ray-duration, 7s) ease-in-out infinite alternate;
-}
-
-@keyframes rayDrift {
-  from { transform: rotate(calc(var(--ray-angle) - 2.4deg)) translateX(-10px); opacity: var(--ray-opacity, .3); }
-  to { transform: rotate(calc(var(--ray-angle) + 2.4deg)) translateX(14px); opacity: calc(var(--ray-opacity, .3) + .16); }
-}
 .np-close {
   position: absolute;
   top: 24px; left: 28px;

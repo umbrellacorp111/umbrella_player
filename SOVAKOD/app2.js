@@ -2120,210 +2120,276 @@ function renderNowPlaying() {
   }
 }
 
-// Создание PS5-частиц (плавают по экрану + лучи из угла)
-function createPS5Particles(includeAmbient = true) {
-  const container = $('#npParticles');
-  if (!container || reduceMotion()) return;
-  
-  // Очищаем старые частицы
-  container.innerHTML = '';
-  
-  const hue = extractHue(state.currentTrack?.color);
-  
-  // 1. Создаем "божественное свечение" из левого верхнего угла
-  const godRays = document.createElement('div');
-  godRays.className = 'ps5-god-rays';
-  container.appendChild(godRays);
-  
-  // Находим позицию обложки
-  const cover = $('.np-art-wrap');
-  if (!cover) return;
-  
-  const coverRect = cover.getBoundingClientRect();
-  
-  // Несколько отдельных тонких лент от одного источника к разным точкам обложки.
-  const rayCount = 6;
-  for (let i = 0; i < rayCount; i++) {
-    const ray = document.createElement('div');
-    ray.className = 'ps5-light-ray';
-    
-    // Распределяем цели по диагонали обложки, чтобы лучи были различимы.
-    const p = i / (rayCount - 1);
-    const targetX = coverRect.left + coverRect.width * (0.05 + p * 0.9);
-    const targetY = coverRect.top + coverRect.height * (0.08 + (1 - p) * 0.84);
-    
-    // Вычисляем длину и угол луча
-    const length = Math.sqrt(targetX ** 2 + targetY ** 2);
-    const angle = Math.atan2(targetY, targetX) * (180 / Math.PI);
-    
-    const delay = i * 0.58;
-    const width = 10 + (i % 3) * 3;
-    const opacity = 0.28 + (i % 2) * 0.12;
-    
-    ray.style.cssText = `
-      width: ${length}px;
-      height: ${width}px;
-      --ray-angle: ${angle}deg;
-      --ray-opacity: ${opacity};
-      --ray-duration: ${6 + i * 0.7}s;
-      animation-delay: ${delay}s;
-    `;
-    
-    godRays.appendChild(ray);
+const ps5Engine = (() => {
+  let canvas, ctx, raf = 0, W = 0, H = 0, booted = false, gathering = false;
+  let parts = [], extras = [];
+  const mouse = { x: null, y: null, px: null, py: null, radius: 160, speed: 0 };
+  let ox = 0, oy = 0, gx = 0, gy = 0;
+
+  function resize() {
+    if (!canvas) return;
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
-  
-  if (!includeAmbient) return;
 
-  // 2. Создаем плавающие частицы (появляются сверху, потом летают)
-  const particleCount = APP_CONFIG.ambientParticles;
-  for (let i = 0; i < particleCount; i++) {
-    const particle = document.createElement('div');
-    particle.className = 'ps5-particle ps5-ambient';
-    
-    // Стартовая позиция (сверху, случайно по X)
-    const startX = Math.random() * 100;
-    const startY = -5;
-    
-    // Конечная позиция (летают по всему экрану)
-    const endX = Math.random() * 100;
-    const endY = Math.random() * 100;
-    
-    const dx = (endX - startX) * window.innerWidth / 100;
-    const dy = (endY - startY) * window.innerHeight / 100;
-    
-    const duration = 8 + Math.random() * 10; // Медленное движение
-    const delay = Math.random() * 3;
-    
-    particle.style.cssText = `
-      left: ${startX}%;
-      top: ${startY}%;
-      --dx: ${dx}px;
-      --dy: ${dy}px;
-      animation: particleDrift ${duration}s ease-in-out ${delay}s infinite alternate;
-    `;
-    
-    container.appendChild(particle);
+  function measure() {
+    if (!canvas) return;
+    const cr = canvas.getBoundingClientRect();
+    const art = $('#npArtWrap') || $('.np-art-wrap');
+    const ar = art ? art.getBoundingClientRect() : null;
+    ox = ar ? ar.left + ar.width / 2 - cr.left : cr.width / 2;
+    oy = ar ? ar.top + ar.height / 2 - cr.top : cr.height / 2;
+    const btn = $('#npPlay');
+    const br = btn ? btn.getBoundingClientRect() : null;
+    gx = br ? br.left + br.width / 2 - cr.left : cr.width / 2;
+    gy = br ? br.top + br.height / 2 - cr.top : cr.height / 2;
   }
-}
 
-let pausedPS5Particles = [];
-
-// Короткий burst используется для открытия и смены трека.
-function burstPS5Particles() {
-  const container = $('#npParticles');
-  if (!container || reduceMotion()) return;
-  // Создаем дополнительные burst частицы
-  const hue = extractHue(state.currentTrack?.color);
-  const burstCount = APP_CONFIG.burstCount;
-  
-  for (let i = 0; i < burstCount; i++) {
-    const particle = document.createElement('div');
-    particle.className = 'ps5-particle';
-    
-    const angle = (i / burstCount) * Math.PI * 2;
-    const dist = 200 + Math.random() * 300;
-    const tx = Math.cos(angle) * dist;
-    const ty = Math.sin(angle) * dist;
-    const duration = 1.2 + Math.random() * 0.8;
-    
-    particle.style.cssText = `
-      left: 50%;
-      top: 50%;
-      --tx: ${tx}px;
-      --ty: ${ty}px;
-      animation: particleBurst ${duration}s ease-out forwards;
-    `;
-    
-    container.appendChild(particle);
-    
-    // Удаляем частицу после анимации
-    setTimeout(() => particle.remove(), duration * 1000);
+  class P {
+    constructor(boot) {
+      this.extra = false;
+      this.dead = false;
+      this.home = false;
+      this.homing = false;
+      this.bokeh = Math.random() > 0.65;
+      this.size = this.bokeh ? Math.random() * 75 + 35 : Math.random() * 4.5 + 1.2;
+      this.maxAlpha = this.bokeh ? Math.random() * 0.12 + 0.03 : Math.random() * 0.5 + 0.15;
+      this.alpha = 0;
+      this.blur = this.bokeh ? 12 : 0;
+      this.wobbleSpeed = Math.random() * 0.02 + 0.005;
+      this.wobbleWeight = Math.random() * 1.5 + 0.5;
+      this.wobbleTime = Math.random() * 100;
+      if (boot) {
+        const r = Math.random() * 120;
+        const a = Math.random() * Math.PI * 2;
+        this.x = ox + Math.cos(a) * r;
+        this.y = oy + Math.sin(a) * r;
+        const sa = Math.random() * Math.PI * 2;
+        const ss = Math.random() * 11 + 4;
+        this.vx = Math.cos(sa) * ss;
+        this.vy = Math.sin(sa) * ss;
+      } else {
+        this.x = Math.random() * W;
+        this.y = H + this.size + Math.random() * 100;
+        this.vx = (Math.random() - 0.5) * 0.8;
+        this.vy = -(Math.random() * 1.2 + 0.6);
+      }
+    }
+    reset() {
+      this.bokeh = Math.random() > 0.65;
+      this.size = this.bokeh ? Math.random() * 75 + 35 : Math.random() * 4.5 + 1.2;
+      this.x = Math.random() * W;
+      this.y = H + this.size + Math.random() * 100;
+      this.vx = (Math.random() - 0.5) * 0.8;
+      this.vy = -(Math.random() * 1.2 + 0.6);
+      this.alpha = 0;
+      this.maxAlpha = this.bokeh ? Math.random() * 0.14 + 0.04 : Math.random() * 0.5 + 0.2;
+      this.blur = this.bokeh ? 12 : 0;
+      this.homing = false;
+      this.home = false;
+    }
+    update() {
+      if (this.alpha < this.maxAlpha) this.alpha += 0.015;
+      this.wobbleTime += this.wobbleSpeed;
+      this.vx += Math.sin(this.wobbleTime) * this.wobbleWeight * 0.03;
+      if (!gathering && mouse.x !== null && mouse.y !== null) {
+        const dx = this.x - mouse.x;
+        const dy = this.y - mouse.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < mouse.radius && d > 0.001) {
+          const f = ((mouse.radius - d) / mouse.radius) * (1 + mouse.speed * 0.2);
+          const push = f * (this.bokeh ? 0.6 : 3.8);
+          this.vx += (dx / d) * push * 0.15 + (dy / d) * push * 0.03;
+          this.vy += (dy / d) * push * 0.15 - (dx / d) * push * 0.03;
+        }
+      }
+      if (gathering) {
+        const dx = gx - this.x;
+        const dy = gy - this.y;
+        this.vx += dx * 0.02;
+        this.vy += dy * 0.02;
+        this.vx *= 0.86;
+        this.vy *= 0.86;
+        this.x += this.vx;
+        this.y += this.vy;
+        if (!this.home && Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+          this.home = true;
+          this.alpha *= 0.9;
+        }
+        if (this.home) this.alpha *= 0.96;
+        return true;
+      }
+      this.vx *= 0.94;
+      const tvy = -(this.bokeh ? 0.4 : 0.9);
+      this.vy = this.vy * 0.94 + tvy * 0.06;
+      this.x += this.vx;
+      this.y += this.vy;
+      if (!this.bokeh) {
+        const tw = Math.sin(this.wobbleTime * 2.5) * 0.15;
+        this.alpha = Math.max(0.1, Math.min(this.maxAlpha + tw, 1));
+      }
+      if (this.y < -this.size - 20 || this.x < -this.size - 20 || this.x > W + this.size + 20) {
+        if (this.extra) return false;
+        this.reset();
+      }
+      return true;
+    }
+    draw() {
+      ctx.save();
+      const sm = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+      if (sm > 2 && !this.bokeh) {
+        ctx.translate(this.x, this.y);
+        ctx.rotate(Math.atan2(this.vy, this.vx));
+        ctx.scale(1 + sm * 0.12, 1);
+        ctx.beginPath();
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, this.size);
+        g.addColorStop(0, `rgba(250, 215, 145, ${this.alpha})`);
+        g.addColorStop(1, 'rgba(225, 175, 95, 0)');
+        ctx.fillStyle = g;
+        ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        if (this.bokeh) {
+          ctx.shadowBlur = this.blur;
+          ctx.shadowColor = `rgba(235, 195, 115, ${this.alpha * 0.6})`;
+        }
+        const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.size);
+        g.addColorStop(0, `rgba(250, 215, 145, ${this.alpha})`);
+        g.addColorStop(0.4, `rgba(225, 175, 95, ${this.alpha * 0.3})`);
+        g.addColorStop(1, 'rgba(225, 175, 95, 0)');
+        ctx.fillStyle = g;
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
   }
-}
 
-// Анимация сборки частиц при закрытии плеера
-function gatherPS5Particles() {
-  const particles = $$('.ps5-particle');
-  if (!particles.length || reduceMotion()) return;
-  
-  particles.forEach((particle, i) => {
-    const rect = particle.getBoundingClientRect();
-    const centerX = window.innerWidth / 2;
-    const centerY = window.innerHeight / 2;
-    const tx = centerX - rect.left;
-    const ty = centerY - rect.top;
-    
-    particle.style.setProperty('--tx', `${tx}px`);
-    particle.style.setProperty('--ty', `${ty}px`);
-    particle.style.animation = `particleGather 0.8s ease-in forwards`;
-    particle.style.animationDelay = `${i * 0.01}s`;
-  });
-}
+  function loop() {
+    ctx.clearRect(0, 0, W, H);
+    parts = parts.filter(p => { const a = p.update(); if (a) p.draw(); return a; });
+    extras = extras.filter(p => { const a = p.update(); if (a) p.draw(); return a; });
+    raf = requestAnimationFrame(loop);
+  }
 
-// При паузе создаём видимые копии фоновых частиц и собираем их строго в npPlay.
-function gatherToPlayButton() {
-  const particles = $$('.ps5-ambient');
-  const playBtn = $('#npPlay');
+  function onMove(e) {
+    if (mouse.x !== null && mouse.px !== null) {
+      mouse.speed = Math.min(Math.hypot(e.clientX - mouse.px, e.clientY - mouse.py), 50);
+    }
+    mouse.px = mouse.x; mouse.py = mouse.y;
+    mouse.x = e.clientX; mouse.y = e.clientY;
+  }
+  function onLeave() { mouse.x = mouse.y = mouse.px = mouse.py = null; mouse.speed = 0; }
+  function onDown(e) {
+    if (gathering || !canvas) return;
+    const cr = canvas.getBoundingClientRect();
+    for (let i = 0; i < 15; i++) {
+      const p = new P(false);
+      p.extra = true;
+      p.x = e.clientX - cr.left;
+      p.y = e.clientY - cr.top;
+      const a = Math.random() * Math.PI * 2;
+      const s = Math.random() * 5 + 3;
+      p.vx = Math.cos(a) * s;
+      p.vy = Math.sin(a) * s;
+      p.maxAlpha = Math.random() * 0.7 + 0.3;
+      p.alpha = p.maxAlpha;
+      extras.push(p);
+    }
+  }
+
+  return {
+    start(container) {
+      if (reduceMotion()) return;
+      if (!booted) {
+        canvas = document.createElement('canvas');
+        canvas.className = 'ps5-canvas';
+        container.appendChild(canvas);
+        ctx = canvas.getContext('2d');
+        window.addEventListener('resize', resize);
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseleave', onLeave);
+        window.addEventListener('mousedown', onDown);
+        booted = true;
+      }
+      cancelAnimationFrame(raf);
+      gathering = false;
+      extras = [];
+      resize();
+      measure();
+      parts = [];
+      for (let i = 0; i < 110; i++) parts.push(new P(true));
+      for (let i = 0; i < 40; i++) parts.push(new P(false));
+      loop();
+    },
+    burst() {
+      if (!canvas || reduceMotion()) return;
+      measure();
+      for (let i = 0; i < 15; i++) {
+        const p = new P(false);
+        p.extra = true;
+        p.x = ox; p.y = oy;
+        const a = Math.random() * Math.PI * 2;
+        const s = Math.random() * 9 + 4;
+        p.vx = Math.cos(a) * s;
+        p.vy = Math.sin(a) * s;
+        p.maxAlpha = Math.random() * 0.6 + 0.3;
+        p.alpha = p.maxAlpha;
+        extras.push(p);
+      }
+    },
+    gather() {
+      if (!parts.length) return;
+      measure();
+      gathering = true;
+      const btn = $('#npPlay');
+      if (btn) btn.classList.add('particle-paused');
+    },
+    release() {
+      if (!gathering) return;
+      gathering = false;
+      const btn = $('#npPlay');
+      if (btn) btn.classList.remove('particle-paused');
+      parts.forEach(p => {
+        if (p.home) {
+          p.home = false;
+          p.x = gx + (Math.random() - 0.5) * 8;
+          p.y = gy + (Math.random() - 0.5) * 8;
+          const a = Math.random() * Math.PI * 2;
+          const s = Math.random() * 8 + 3;
+          p.vx = Math.cos(a) * s;
+          p.vy = Math.sin(a) * s;
+          p.alpha = 0;
+        }
+      });
+    },
+    stop() {
+      cancelAnimationFrame(raf);
+      if (ctx) ctx.clearRect(0, 0, W, H);
+      gathering = false;
+      parts = [];
+      extras = [];
+      const btn = $('#npPlay');
+      if (btn) btn.classList.remove('particle-paused');
+    },
+  };
+})();
+
+function createPS5Particles() {
   const container = $('#npParticles');
-  if (!particles.length || !playBtn || !container || reduceMotion() || !window.gsap) return;
-
-  pausedPS5Particles.forEach(({ node }) => node.remove());
-  pausedPS5Particles = [];
-  const button = playBtn.getBoundingClientRect();
-  const containerRect = container.getBoundingClientRect();
-  const centerX = button.left + button.width / 2;
-  const centerY = button.top + button.height / 2;
-  playBtn.classList.add('particle-paused');
-
-  particles.forEach((particle, i) => {
-    const rect = particle.getBoundingClientRect();
-    const node = document.createElement('i');
-    const targetX = centerX + (Math.random() - 0.5) * 12;
-    const targetY = centerY + (Math.random() - 0.5) * 12;
-    node.className = 'ps5-pause-particle';
-    node.style.left = `${rect.left - containerRect.left}px`;
-    node.style.top = `${rect.top - containerRect.top}px`;
-    container.appendChild(node);
-    particle.style.opacity = '0';
-    pausedPS5Particles.push({ node, particle, targetX, targetY });
-    gsap.to(node, {
-      x: targetX - rect.left,
-      y: targetY - rect.top,
-      scale: 0.55,
-      duration: 0.8 + Math.random() * 0.35,
-      delay: i * 0.018,
-      ease: 'power4.in',
-    });
-  });
+  if (!container) return;
+  ps5Engine.start(container);
 }
 
-// При запуске частицы летят от центра кнопки обратно к своим исходным позициям.
-function releaseFromPlayButton() {
-  if (!pausedPS5Particles.length || !window.gsap) return;
-  $('#npPlay')?.classList.remove('particle-paused');
-  pausedPS5Particles.forEach(({ node, particle }, i) => {
-    gsap.to(node, {
-      x: 0,
-      y: 0,
-      scale: 1.15,
-      opacity: 0,
-      duration: 1 + Math.random() * 0.45,
-      delay: i * 0.014,
-      ease: 'power3.out',
-      onComplete: () => {
-        node.remove();
-        particle.style.opacity = '';
-      },
-    });
-  });
-  pausedPS5Particles = [];
-}
-
-// Обновляем частицы при смене трека
+function burstPS5Particles() { ps5Engine.burst(); }
+function gatherPS5Particles() { ps5Engine.stop(); }
+function gatherToPlayButton() { ps5Engine.gather(); }
+function releaseFromPlayButton() { ps5Engine.release(); }
 function updatePS5Particles() {
-  if (settings.visualizer && !$('#nowPlaying').hidden) {
-    createPS5Particles();
-  }
+  if (settings.visualizer && !$('#nowPlaying').hidden) createPS5Particles();
 }
 
 function updateLibraryButtonState() {
@@ -7488,8 +7554,8 @@ setTimeout(bootApp, 300);
      полный диапазон 0..1 с реальными перепадами. */
   const agc = { bass: 0.10, mid: 0.10, hi: 0.10, rms: 0.10 };
   function agcNorm(raw, key, floor) {
-    if (raw > agc[key]) agc[key] = raw;
-    else agc[key] = Math.max(floor, agc[key] * 0.996);
+    if (raw > agc[key] * 1.05 || raw > agc[key] + 0.04) agc[key] = raw;
+    else agc[key] = Math.max(floor, agc[key] * 0.988);
     return clamp(raw / agc[key], 0, 1);
   }
 
@@ -7765,13 +7831,22 @@ setTimeout(bootApp, 300);
     const release = () => { if (drag.active) { drag.active = false; wrap.classList.remove('lv-grabbing'); } };
     ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => wrap.addEventListener(ev, release));
 
-    // Волны — только из мини-обложки, когда большой плеер закрыт
-    beatListeners.push((s) => {
-      if (!config.cover || lowFx() || quality > 0 || npOpen() || s < 0.42) return;
+  }
+
+  const rmsHistory = [];
+  let lastRmsBeat = 0;
+  function tickPbCoverRipples(now) {
+    if (!config.cover || lowFx() || quality > 0 || npOpen()) return;
+    rmsHistory.push(A.rms);
+    if (rmsHistory.length > 48) rmsHistory.shift();
+    const avg = rmsHistory.reduce((s, v) => s + v, 0) / rmsHistory.length;
+    if (A.rms > avg * 1.15 && A.rms > 0.08 && now - lastRmsBeat > 200) {
+      lastRmsBeat = now;
       const c = centerOf(qs('#playerCover'));
       if (!c) return;
-      ripple(c.x, c.y, { vr: 4 + s * 7, decay: 0.012 + (1 - s) * 0.01, width: 1.2 + s * 2.4, alpha: 0.28 + s * 0.35 });
-    });
+      const sc = Math.pow(clamp(A.rms * 1.5, 0.1, 1), 0.6);
+      ripple(c.x, c.y, { vr: 3 + sc * 9, decay: 0.010 + (1 - sc) * 0.014, width: 0.8 + sc * 2.8, alpha: 0.18 + sc * 0.45 });
+    }
   }
 
   function startOrbits(el, n = 10) {
@@ -8230,6 +8305,7 @@ setTimeout(bootApp, 300);
     safe(drawFx);
     safe(updateDebug);
     safe(() => drawPbWaves(now));
+    safe(() => tickPbCoverRipples(now));
   }
 
   function start() { if (!raf) { last = lastTick = performance.now(); raf = requestAnimationFrame(frame); } }
