@@ -7554,9 +7554,10 @@ setTimeout(bootApp, 300);
      полный диапазон 0..1 с реальными перепадами. */
   const agc = { bass: 0.10, mid: 0.10, hi: 0.10, rms: 0.10 };
   function agcNorm(raw, key, floor) {
-    if (raw > agc[key] * 1.05 || raw > agc[key] + 0.04) agc[key] = raw;
-    else agc[key] = Math.max(floor, agc[key] * 0.988);
-    return clamp(raw / agc[key], 0, 1);
+    const cur = agc[key];
+    if (raw > cur) agc[key] = lerp(cur, raw, 0.12);
+    else agc[key] = Math.max(floor, lerp(cur, raw, 0.006));
+    return clamp(raw / Math.max(agc[key], 0.02), 0, 1);
   }
 
   function analyse(now) {
@@ -7651,16 +7652,21 @@ setTimeout(bootApp, 300);
   }
 
   const beatListeners = [];
+  let prevBass = 0;
   function detectBeat(now, bass) {
     bassHistory.push(bass);
     if (bassHistory.length > 48) bassHistory.shift();
     const avg = bassHistory.reduce((s, v) => s + v, 0) / bassHistory.length;
+    const delta = bass - prevBass;
+    prevBass = bass;
     A.beat *= 0.86;
-    if (bass > avg * 1.3 && bass > 0.2 && now - lastBeat > 170) {
-      lastBeat = now;
-      const sensitivity = clamp(Number(config.beatSensitivity) || 2.2, 0.1, 8);
-      A.beat = clamp(bass * sensitivity, 0.3, 4);
-      for (const fn of beatListeners) safe(() => fn(clamp(A.beat, 0, 4)));
+    if ((bass > avg * 1.15 && bass > 0.15 && delta > 0.04) || (bass > 0.92 && delta > 0.02)) {
+      if (now - lastBeat > 130) {
+        lastBeat = now;
+        const sensitivity = clamp(Number(config.beatSensitivity) || 2.2, 0.1, 8);
+        A.beat = clamp(Math.max(bass * sensitivity, delta * sensitivity * 3), 0.3, 4);
+        for (const fn of beatListeners) safe(() => fn(clamp(A.beat, 0, 4)));
+      }
     }
   }
 
