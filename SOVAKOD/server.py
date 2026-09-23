@@ -153,21 +153,34 @@ AUDIO_FILE_CACHE: dict[str, tuple[str, float]] = {}
 ARTIST_IMG_CACHE: dict[str, tuple[bytes, str, float]] = {}
 ARTIST_BIO_CACHE: dict[str, tuple[float, dict]] = {}
 WIKI_PAGE_CACHE: dict[str, tuple[float, dict]] = {}
-# Папка рядом с .exe (или со скриптом) — сюда кладётся artist_overrides.json,
-# который можно править без пересборки.
+# Единая writable-папка для токенов, аккаунтов, кэша и логов.
+# Всегда user_data рядом с .exe / скриптом — чтобы токены SC не терялись
+# при перезапуске (раньше APP_DATA_DIR = папка скрипта, а webview storage
+# = user_data, плюс при упаковке путь мог меняться).
 _ENV_DATA_DIR = os.getenv("APP_DATA_DIR", "").strip()
 if _ENV_DATA_DIR:
-    # Android (и любая упаковка, где каталог приложения только для чтения)
-    # передаёт сюда путь к приватной writable-папке.
+    # Android / упаковка с read-only каталогом приложения.
     APP_DATA_DIR = Path(_ENV_DATA_DIR)
 elif getattr(sys, "frozen", False):
-    APP_DATA_DIR = Path(sys.executable).resolve().parent
+    APP_DATA_DIR = Path(sys.executable).resolve().parent / "user_data"
 else:
-    APP_DATA_DIR = Path(__file__).resolve().parent
+    APP_DATA_DIR = Path(__file__).resolve().parent / "user_data"
 try:
     APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 except OSError:
     pass
+# Миграция: старые sc_token.txt / sc_accounts.json лежали рядом со скриптом.
+_LEGACY_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+if _LEGACY_DIR != APP_DATA_DIR:
+    for _name in ("sc_token.txt", "sc_accounts.json", "sc_app.txt", "artist_overrides.json"):
+        _src = _LEGACY_DIR / _name
+        _dst = APP_DATA_DIR / _name
+        if _src.is_file() and not _dst.is_file():
+            try:
+                import shutil
+                shutil.copy2(_src, _dst)
+            except OSError:
+                pass
 ARTIST_OVERRIDES_PATH = APP_DATA_DIR / "artist_overrides.json"
 ARTIST_OVERRIDES_CACHE: dict[str, object] = {"mtime": 0.0, "data": {}}
 log = logging.getLogger("umbrella")
@@ -402,25 +415,84 @@ def _sc_apply_active(data: dict) -> str:
 _sc_apply_active(_sc_accounts_load())
 
 
-def _sc_fetch_me(token: str) -> dict:
-    """Профиль по токену: {nick, avatar}. Пусто при неудаче."""
+def _sc_client_id_for_auth() -> str:
+    """client_id для проверки web oauth_token (как у yt-dlp)."""
+    # Известный живой ключ веб-клиента + кэш пула, если уже крутили
+    for cid in SC_KNOWN_CLIENT_IDS:
+        if cid:
+            return cid
+    return "fXuVKzsVXlc6tzniWWS31etd7VHWFUuN"
+
+
+def _sc_verify_oauth_token(token: str) -> bool:
+    """Проверка web oauth_token через api-auth (тот же путь, что yt-dlp).
+    Официальный api.soundcloud.com/me часто отклоняет cookie-токен браузера,
+    хотя стрим через yt-dlp с ним работает."""
+    if not token or len(token) < 8:
+        return False
     import urllib.request
+    cid = _sc_client_id_for_auth()
+    url = f"https://api-auth.soundcloud.com/connect/session?client_id={cid}"
+    body = json.dumps({"session": {"access_token": token}}).encode("utf-8")
     try:
         req = urllib.request.Request(
-            "https://api.soundcloud.com/me",
-            headers={"accept": "application/json; charset=utf-8",
-                     "Authorization": f"OAuth {token}",
-                     "User-Agent": SERVER_VERSION})
+            url, data=body, method="POST",
+            headers={
+                "accept": "application/json",
+                "content-type": "application/json",
+                "User-Agent": DEFAULT_UA,
+                "Origin": "https://soundcloud.com",
+                "Referer": "https://soundcloud.com/",
+            },
+        )
         with urllib.request.urlopen(req, timeout=12) as resp:
-            me = json.loads(resp.read().decode("utf-8"))
-        if not isinstance(me, dict):
-            return {}
-        nick = str(me.get("username") or me.get("full_name") or "").strip()
-        avatar = str(me.get("avatar_url") or "").strip()
-        return {"nick": nick, "avatar": avatar} if nick else {}
+            code = getattr(resp, "status", 200) or 200
+            # yt-dlp считает успехом любой не-false ответ веб-страницы;
+            # нам достаточно 2xx.
+            return 200 <= int(code) < 300
+    except urllib.error.HTTPError as error:
+        log.debug("SC token verify HTTP %s", getattr(error, "code", "?"))
+        return False
     except Exception as error:
-        log.debug("SoundCloud /me failed: %s", error)
+        log.debug("SC token verify failed: %s", error)
+        return False
+
+
+def _sc_fetch_me(token: str) -> dict:
+    """Профиль по токену: {nick, avatar}. Пусто при неудаче.
+    Сначала api-v2 (принимает web oauth), потом legacy api.soundcloud.com."""
+    import urllib.request
+    if not token:
         return {}
+    headers_base = {
+        "accept": "application/json; charset=utf-8",
+        "Authorization": f"OAuth {token}",
+        "User-Agent": DEFAULT_UA,
+        "Origin": "https://soundcloud.com",
+        "Referer": "https://soundcloud.com/",
+    }
+    urls = (
+        "https://api-v2.soundcloud.com/me",
+        "https://api.soundcloud.com/me",
+    )
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers=headers_base)
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                me = json.loads(resp.read().decode("utf-8"))
+            if not isinstance(me, dict):
+                continue
+            nick = str(me.get("username") or me.get("full_name") or "").strip()
+            avatar = str(me.get("avatar_url") or "").strip()
+            if nick:
+                return {"nick": nick, "avatar": avatar}
+        except Exception as error:
+            log.debug("SoundCloud /me via %s failed: %s", url, error)
+    # Токен может быть валиден для стрима, но /me недоступен — не роняем.
+    if _sc_verify_oauth_token(token):
+        short = token[-6:] if len(token) > 6 else token
+        return {"nick": f"SoundCloud-{short}", "avatar": ""}
+    return {}
 
 
 def _sc_public_accounts(data: dict) -> list[dict]:
@@ -437,35 +509,73 @@ SC_BROWSERS = ("edge", "chrome", "brave", "vivaldi", "opera", "chromium", "firef
 
 
 def _sc_browser_oauth_token(browser: str | None = None) -> tuple[str, str]:
-    """Найти oauth_token SoundCloud в куках браузеров. Возвращает (токен, браузер)."""
+    """Найти oauth_token SoundCloud в куках браузеров. Возвращает (токен, браузер).
+
+    Chrome/Edge часто блокируют Cookies DB, пока браузер открыт — пробуем
+    все профили и несколько имён кук. Токен вида 2-xxx-xxx-xxx.
+    """
     if yt_dlp is None:
         return "", ""
     try:
         from yt_dlp import cookies as _ydl_cookies
-    except Exception:
+    except Exception as error:
+        log.warning("yt-dlp cookies unavailable: %s", error)
         return "", ""
+
     names = [browser] if browser else list(SC_BROWSERS)
+    # Имена, которые встречались у SoundCloud в web-сессии
+    cookie_names = ("oauth_token", "oauth_token_web", "sc_oauth_token")
+    errors: list[str] = []
+
     for name in names:
+        jar = None
         try:
             jar = _ydl_cookies.extract_cookies_from_browser(name)
-        except Exception:
+        except Exception as error:
+            msg = str(error)
+            errors.append(f"{name}: {msg[:120]}")
+            # Типичный lock Chrome: «Could not copy cookie» / database is locked
+            log.debug("SC cookies from %s failed: %s", name, error)
             continue
+        if jar is None:
+            continue
+        candidates: list[tuple[str, str]] = []  # (token, domain)
         try:
             for cookie in jar:
-                domain = (getattr(cookie, "domain", "") or "").lstrip(".")
-                if (getattr(cookie, "name", "") == "oauth_token"
-                        and getattr(cookie, "value", "")
-                        and domain.endswith("soundcloud.com")):
-                    return str(cookie.value), name
-        except Exception:
+                cname = getattr(cookie, "name", "") or ""
+                if cname not in cookie_names:
+                    continue
+                value = str(getattr(cookie, "value", "") or "").strip()
+                if not value or len(value) < 10:
+                    continue
+                domain = (getattr(cookie, "domain", "") or "").lstrip(".").lower()
+                if "soundcloud" not in domain:
+                    continue
+                candidates.append((value, domain))
+        except Exception as error:
+            errors.append(f"{name}-iter: {str(error)[:80]}")
             continue
+        # Предпочитаем oauth_token на soundcloud.com / api.soundcloud.com
+        if candidates:
+            candidates.sort(key=lambda t: (
+                0 if t[1].endswith("soundcloud.com") else 1,
+                -len(t[0]),
+            ))
+            token = candidates[0][0]
+            log.info("SC oauth_token found in %s (%s…)", name, token[:8])
+            return token, name
+
+    if errors:
+        log.warning("SC browser cookies not found. Hints: %s", " | ".join(errors[:3]))
     return "", ""
 
 
 def _quarantine_sc_token() -> None:
     """Мёртвый user-токен в сторону: память чистим, файл переименовываем,
-    чтобы следующий вызов не подхватил его снова (и ушёл в пул/app)."""
+    и убираем токен из активного аккаунта в sc_accounts.json, чтобы после
+    перезапуска не подхватывался снова мёртвый ключ."""
     global SC_OAUTH_TOKEN
+    dead = SC_OAUTH_TOKEN or ""
     SC_OAUTH_TOKEN = ""
     try:
         if SC_TOKEN_FILE.is_file():
@@ -478,6 +588,25 @@ def _quarantine_sc_token() -> None:
             log.warning("Dead SoundCloud oauth token moved aside")
     except OSError:
         pass
+    # Снимаем мёртвый токен с аккаунта, но профиль оставляем (ник/аватар),
+    # чтобы человек мог перепривязать без «пропажи» плитки.
+    try:
+        data = _sc_accounts_load()
+        changed = False
+        for acc in data.get("accounts", []):
+            if dead and acc.get("token") == dead:
+                acc["token"] = ""
+                changed = True
+            elif not dead and acc.get("id") == data.get("active"):
+                acc["token"] = ""
+                changed = True
+        if changed:
+            if data.get("active") != "guest":
+                # Оставляем active — при следующем входе через браузер обновится.
+                pass
+            _sc_accounts_save(data)
+    except Exception as error:
+        log.debug("quarantine accounts update failed: %s", error)
 API_TOKEN = secrets.token_urlsafe(32)
 YDL_LIMIT = threading.BoundedSemaphore(YDL_CONCURRENCY)
 EXTERNAL_API_LIMIT = threading.BoundedSemaphore(EXTERNAL_API_CONCURRENCY)
@@ -2119,20 +2248,36 @@ class AppHandler(SimpleHTTPRequestHandler):
                            HTTPStatus.BAD_GATEWAY)
 
     def handle_sc_token(self, body: dict) -> None:
-        """Сохранить OAuth-токен SoundCloud в sc_token.txt (только с X-Umbrella-Token)."""
+        """Сохранить OAuth-токен SoundCloud: sc_token.txt + sc_accounts.json."""
         global SC_OAUTH_TOKEN
         token = str((body or {}).get("token", "")).strip()
         if not token or len(token) > 500:
             self.send_json({"error": "Пустой или слишком длинный токен"}, HTTPStatus.BAD_REQUEST)
             return
-        try:
-            SC_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-            SC_TOKEN_FILE.write_text(token + "\n", encoding="utf-8")
-        except OSError as error:
-            self.send_json({"error": f"Не удалось сохранить токен: {error}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
-            return
-        SC_OAUTH_TOKEN = token
-        self.send_json({"ok": True})
+        me = _sc_fetch_me(token)
+        nick = (me.get("nick") or "SoundCloud").strip()
+        avatar = me.get("avatar") or ""
+        data = _sc_accounts_load()
+        acc_id = ""
+        for acc in data["accounts"]:
+            if (acc.get("nick") or "").lower() == nick.lower() or acc.get("token") == token:
+                acc["token"] = token
+                if avatar:
+                    acc["avatar"] = avatar
+                if nick and nick != "SoundCloud":
+                    acc["nick"] = nick
+                acc_id = acc["id"]
+                break
+        if not acc_id:
+            acc_id = secrets.token_hex(4)
+            data["accounts"].append({
+                "id": acc_id, "nick": nick, "avatar": avatar,
+                "token": token, "added": time.time(),
+            })
+        data["active"] = acc_id
+        _sc_accounts_save(data)
+        _sc_apply_active(data)
+        self.send_json({"ok": True, "account": {"id": acc_id, "nick": nick, "avatar": avatar}})
 
     def handle_sc_token_delete(self) -> None:
         """Удалить сохранённый OAuth-токен SoundCloud (только с X-Umbrella-Token)."""
@@ -2175,18 +2320,35 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         token, found_in = _sc_browser_oauth_token(browser)
         if not token:
-            self.send_json({"ok": False, "browser": found_in,
-                            "error": "Вход не найден: войдите в SoundCloud в браузере"},
-                           HTTPStatus.OK)
+            self.send_json({
+                "ok": False,
+                "browser": found_in or "",
+                "error": (
+                    "Кука oauth_token не найдена. "
+                    "Закройте Chrome/Edge полностью (все окна), войдите на soundcloud.com "
+                    "в обычном окне (не инкогнито) и нажмите привязку ещё раз. "
+                    "Либо вставьте токен вручную: F12 → Application → Cookies → oauth_token."
+                ),
+            }, HTTPStatus.OK)
             return
-        # Проверяем токен сразу: мёртвый cookie не должен создавать
-        # «успешную» привязку, которая отвалится после перезапуска.
+        # Проверка: api-auth (как yt-dlp) + /me. Если verify ок — принимаем даже
+        # без ника (ник подставим заглушкой), чтобы не слать ложное «протухла».
         me = _sc_fetch_me(token)
         if not me.get("nick"):
-            self.send_json({"ok": False, "browser": found_in,
-                            "error": "Браузер разлогинен или сессия протухла: выйдите и войдите в SoundCloud заново"},
-                           HTTPStatus.OK)
-            return
+            if _sc_verify_oauth_token(token):
+                me = {"nick": f"SoundCloud-{token[-6:]}", "avatar": ""}
+            else:
+                self.send_json({
+                    "ok": False,
+                    "browser": found_in,
+                    "error": (
+                        "Токен из браузера не принят SoundCloud. "
+                        "Полностью выйдите из soundcloud.com → закройте браузер → "
+                        "откройте снова → войдите → сразу нажмите привязку в плеере. "
+                        "Не используйте инкогнито."
+                    ),
+                }, HTTPStatus.OK)
+                return
         nick = me.get("nick")
         data = _sc_accounts_load()
         acc_id = ""

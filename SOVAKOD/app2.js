@@ -2165,158 +2165,6 @@ const ps5Engine = (() => {
   let parts = [], extras = [];
   const mouse = { x: null, y: null, px: null, py: null, radius: 160, speed: 0 };
   let ox = 0, oy = 0, gx = 0, gy = 0;
-<<<<<<< Updated upstream
-
-  function resize() {
-    if (!canvas) return;
-    W = canvas.clientWidth; H = canvas.clientHeight;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = W * dpr; canvas.height = H * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-
-  function measure() {
-    if (!canvas) return;
-    const cr = canvas.getBoundingClientRect();
-    const art = $('#npArtWrap') || $('.np-art-wrap');
-    const ar = art ? art.getBoundingClientRect() : null;
-    ox = ar ? ar.left + ar.width / 2 - cr.left : cr.width / 2;
-    oy = ar ? ar.top + ar.height / 2 - cr.top : cr.height / 2;
-    const btn = $('#npPlay');
-    const br = btn ? btn.getBoundingClientRect() : null;
-    gx = br ? br.left + br.width / 2 - cr.left : cr.width / 2;
-    gy = br ? br.top + br.height / 2 - cr.top : cr.height / 2;
-  }
-
-  class P {
-    constructor(boot) {
-      this.extra = false;
-      this.dead = false;
-      this.home = false;
-      this.homing = false;
-      this.bokeh = Math.random() > 0.65;
-      this.size = this.bokeh ? Math.random() * 75 + 35 : Math.random() * 4.5 + 1.2;
-      this.maxAlpha = this.bokeh ? Math.random() * 0.12 + 0.03 : Math.random() * 0.5 + 0.15;
-      this.alpha = 0;
-      this.blur = this.bokeh ? 12 : 0;
-      this.wobbleSpeed = Math.random() * 0.02 + 0.005;
-      this.wobbleWeight = Math.random() * 1.5 + 0.5;
-      this.wobbleTime = Math.random() * 100;
-      if (boot) {
-        const r = Math.random() * 120;
-        const a = Math.random() * Math.PI * 2;
-        this.x = ox + Math.cos(a) * r;
-        this.y = oy + Math.sin(a) * r;
-        const sa = Math.random() * Math.PI * 2;
-        const ss = Math.random() * 11 + 4;
-        this.vx = Math.cos(sa) * ss;
-        this.vy = Math.sin(sa) * ss;
-      } else {
-        this.x = Math.random() * W;
-        this.y = H + this.size + Math.random() * 100;
-        this.vx = (Math.random() - 0.5) * 0.8;
-        this.vy = -(Math.random() * 1.2 + 0.6);
-      }
-    }
-    reset() {
-      this.bokeh = Math.random() > 0.65;
-      this.size = this.bokeh ? Math.random() * 75 + 35 : Math.random() * 4.5 + 1.2;
-      this.x = Math.random() * W;
-      this.y = H + this.size + Math.random() * 100;
-      this.vx = (Math.random() - 0.5) * 0.8;
-      this.vy = -(Math.random() * 1.2 + 0.6);
-      this.alpha = 0;
-      this.maxAlpha = this.bokeh ? Math.random() * 0.14 + 0.04 : Math.random() * 0.5 + 0.2;
-      this.blur = this.bokeh ? 12 : 0;
-      this.homing = false;
-      this.home = false;
-    }
-    update() {
-      if (this.alpha < this.maxAlpha) this.alpha += 0.015;
-      this.wobbleTime += this.wobbleSpeed;
-      this.vx += Math.sin(this.wobbleTime) * this.wobbleWeight * 0.03;
-      if (!gathering && mouse.x !== null && mouse.y !== null) {
-        const dx = this.x - mouse.x;
-        const dy = this.y - mouse.y;
-        const d = Math.sqrt(dx * dx + dy * dy);
-        if (d < mouse.radius && d > 0.001) {
-          const f = ((mouse.radius - d) / mouse.radius) * (1 + mouse.speed * 0.2);
-          const push = f * (this.bokeh ? 0.6 : 3.8);
-          this.vx += (dx / d) * push * 0.15 + (dy / d) * push * 0.03;
-          this.vy += (dy / d) * push * 0.15 - (dx / d) * push * 0.03;
-        }
-      }
-      if (gathering) {
-        const dx = gx - this.x;
-        const dy = gy - this.y;
-        this.vx += dx * 0.02;
-        this.vy += dy * 0.02;
-        this.vx *= 0.86;
-        this.vy *= 0.86;
-        this.x += this.vx;
-        this.y += this.vy;
-        if (!this.home && Math.abs(dx) < 10 && Math.abs(dy) < 10) {
-          this.home = true;
-          this.alpha *= 0.9;
-        }
-        if (this.home) this.alpha *= 0.96;
-        return true;
-      }
-      this.vx *= 0.94;
-      const tvy = -(this.bokeh ? 0.4 : 0.9);
-      this.vy = this.vy * 0.94 + tvy * 0.06;
-      this.x += this.vx;
-      this.y += this.vy;
-      if (!this.bokeh) {
-        const tw = Math.sin(this.wobbleTime * 2.5) * 0.15;
-        this.alpha = Math.max(0.1, Math.min(this.maxAlpha + tw, 1));
-      }
-      if (this.y < -this.size - 20 || this.x < -this.size - 20 || this.x > W + this.size + 20) {
-        if (this.extra) return false;
-        this.reset();
-      }
-      return true;
-    }
-    draw() {
-      ctx.save();
-      const sm = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-      if (sm > 2 && !this.bokeh) {
-        ctx.translate(this.x, this.y);
-        ctx.rotate(Math.atan2(this.vy, this.vx));
-        ctx.scale(1 + sm * 0.12, 1);
-        ctx.beginPath();
-        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, this.size);
-        g.addColorStop(0, `rgba(250, 215, 145, ${this.alpha})`);
-        g.addColorStop(1, 'rgba(225, 175, 95, 0)');
-        ctx.fillStyle = g;
-        ctx.arc(0, 0, this.size, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.beginPath();
-        if (this.bokeh) {
-          ctx.shadowBlur = this.blur;
-          ctx.shadowColor = `rgba(235, 195, 115, ${this.alpha * 0.6})`;
-        }
-        const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.size);
-        g.addColorStop(0, `rgba(250, 215, 145, ${this.alpha})`);
-        g.addColorStop(0.4, `rgba(225, 175, 95, ${this.alpha * 0.3})`);
-        g.addColorStop(1, 'rgba(225, 175, 95, 0)');
-        ctx.fillStyle = g;
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-  }
-
-  function loop() {
-    ctx.clearRect(0, 0, W, H);
-    parts = parts.filter(p => { const a = p.update(); if (a) p.draw(); return a; });
-    extras = extras.filter(p => { const a = p.update(); if (a) p.draw(); return a; });
-    raf = requestAnimationFrame(loop);
-  }
-
-=======
   let frameHue = 262;
   // Оттенок акцента для частиц: читаем раз за кадр, а не на каждую частицу.
   function sampleAccentHue() {
@@ -2368,14 +2216,16 @@ const ps5Engine = (() => {
       this.wobbleWeight = Math.random() * 1.5 + 0.5;
       this.wobbleTime = Math.random() * 100;
       if (boot) {
-        const r = Math.random() * 120;
+        // PS5: искры стартуют из центра и резко разлетаются наружу
         const a = Math.random() * Math.PI * 2;
+        const r = Math.random() * 28;
         this.x = ox + Math.cos(a) * r;
         this.y = oy + Math.sin(a) * r;
-        const sa = Math.random() * Math.PI * 2;
-        const ss = Math.random() * 11 + 4;
+        const sa = a + (Math.random() - 0.5) * 0.7;
+        const ss = Math.random() * 14 + 6;
         this.vx = Math.cos(sa) * ss;
         this.vy = Math.sin(sa) * ss;
+        this.alpha = Math.random() * 0.35 + 0.15;
       } else {
         this.x = Math.random() * W;
         this.y = H + this.size + Math.random() * 100;
@@ -2484,7 +2334,6 @@ const ps5Engine = (() => {
     raf = requestAnimationFrame(loop);
   }
 
->>>>>>> Stashed changes
   function onMove(e) {
     if (mouse.x !== null && mouse.px !== null) {
       mouse.speed = Math.min(Math.hypot(e.clientX - mouse.px, e.clientY - mouse.py), 50);
@@ -2517,10 +2366,6 @@ const ps5Engine = (() => {
       if (!booted) {
         canvas = document.createElement('canvas');
         canvas.className = 'ps5-canvas';
-<<<<<<< Updated upstream
-        container.appendChild(canvas);
-=======
->>>>>>> Stashed changes
         ctx = canvas.getContext('2d');
         window.addEventListener('resize', resize);
         window.addEventListener('mousemove', onMove);
@@ -2528,12 +2373,9 @@ const ps5Engine = (() => {
         window.addEventListener('mousedown', onDown);
         booted = true;
       }
-<<<<<<< Updated upstream
-=======
       // Канвас один на движок и переезжает за контейнером (сплэш → вход → плеер),
       // иначе после первого экрана он остаётся в скрытом контейнере с нулевым размером.
       if (container && canvas.parentElement !== container) container.appendChild(canvas);
->>>>>>> Stashed changes
       cancelAnimationFrame(raf);
       gathering = false;
       extras = [];
@@ -4883,9 +4725,12 @@ async function renderAccountTiles() {
     }
   }
   // Сервер так и не ответил — остаёмся на госте, это офлайн-режим.
-}async function onAccountTile(pid) {
+}
+
+async function onAccountTile(pid) {
   if (accountSelectBusy) return;
   if (pid === '__add') { accountLoginFlow(); return; }
+  skipAutoLogin = false; // осознанный выбор профиля
   accountSelectBusy = true;
   try {
     await request('/sc/accounts/active', { method: 'POST', body: JSON.stringify({ id: pid }), timeout: 15000 });
@@ -4923,94 +4768,287 @@ async function removeAccount(accId) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-/* Автовход: один клик открывает браузер, дальше сами опрашиваем куки,
-   пока человек логинится. Второго клика не нужно (но он работает как
-   принудительная проверка прямо сейчас). */
+/* Автовход: один клик открывает браузер, дальше сами опрашиваем куки.
+   Пока ждём — оверлей. После успеха — уведомление и сразу в плеер. */
 let loginPollTimer = 0;
 function stopLoginPolling() {
   if (loginPollTimer) { clearTimeout(loginPollTimer); loginPollTimer = 0; }
 }
-function pollBrowserImport(onBound) {
+
+function showBrowserLoginOverlay(msg) {
+  const ov = $('#browserLoginOverlay');
+  if (!ov) return;
+  const sub = $('#browserLoginSub');
+  if (sub && msg) sub.textContent = msg;
+  ov.hidden = false;
+}
+function hideBrowserLoginOverlay() {
+  const ov = $('#browserLoginOverlay');
+  if (ov) ov.hidden = true;
+}
+function showSessionResume(msg) {
+  const view = document.getElementById('loginView');
+  const ov = $('#sessionResumeOverlay');
+  const sub = $('#sessionResumeSub');
+  if (sub && msg) sub.textContent = msg;
+  if (view) view.classList.add('session-resuming');
+  if (ov) ov.hidden = false;
+  // Скрываем плитки, чтобы нельзя было ткнуть «не туда»
+  const acc = $('#accountView');
+  if (acc) acc.hidden = true;
+}
+function hideSessionResume() {
+  const view = document.getElementById('loginView');
+  const ov = $('#sessionResumeOverlay');
+  if (view) view.classList.remove('session-resuming');
+  if (ov) ov.hidden = true;
+}
+
+function pollBrowserImport(onBound, onTick) {
   stopLoginPolling();
   let tries = 0;
   const step = async () => {
     loginPollTimer = 0;
-    if (++tries > 40) { onBound(null); return; }   // ~2 минуты, дальше молча стоим
+    if (++tries > 50) { onBound(null, 'timeout'); return; } // ~2.5 мин
     try {
+      if (typeof onTick === 'function') onTick(tries);
       const res = await request('/sc/browser-import', { method: 'POST', body: '{}', timeout: 20000 });
-      if (res && res.ok && res.account) { onBound(res.account); return; }
-    } catch (e) { /* сеть/сон — ждём следующую итерацию */ }
-    loginPollTimer = setTimeout(step, 3000);
+      if (res && res.ok && res.account) { onBound(res.account, null); return; }
+      if (res && res.error && tries > 3 && typeof onTick === 'function') {
+        onTick(tries, res.error);
+      }
+    } catch (e) { /* сеть — ждём */ }
+    loginPollTimer = setTimeout(step, 2800);
   };
-  loginPollTimer = setTimeout(step, 2500);
+  loginPollTimer = setTimeout(step, 2000);
 }
 
 async function boundAccount(account) {
   stopLoginPolling();
   accountLoginPending = false;
-  toast(`Профиль «${account.nick}» привязан — вход сохранён`, 'success');
-  await renderAccountTiles();
+  hideBrowserLoginOverlay();
   const hint = $('#accountHint');
   if (hint) hint.textContent = '← → — выбор · Enter — войти';
-  onAccountTile(account.id);
+  toast(`«${account.nick}» привязан — входим`, 'success', 2800);
+  // Сразу в плеер, без ожидания повторного клика по плитке
+  skipAutoLogin = false;
+  try {
+    accountCache = accountCache || { accounts: [] };
+    if (!(accountCache.accounts || []).some((a) => a.id === account.id)) {
+      accountCache.accounts = (accountCache.accounts || []).concat([account]);
+    }
+  } catch (e) {}
+  await onAccountTile(account.id);
 }
 
 async function accountLoginFlow() {
   const hint = $('#accountHint');
-  if (!accountLoginPending) {
+  // Повторный клик во время ожидания = принудительная проверка
+  if (accountLoginPending) {
+    const sub = $('#browserLoginSub');
+    if (sub) sub.textContent = 'Проверяем сессию…';
     try {
-      await request('/sc/open-login', { method: 'POST', timeout: 15000 });
-      accountLoginPending = true;
-      if (hint) hint.textContent = 'Войдите в браузере — вход подхватится сам…';
-      toast('Войдите в SoundCloud в браузере', 'info', 3500);
-      pollBrowserImport((account) => { if (account) boundAccount(account); });
-    } catch (e) { toast(e.message, 'error'); }
+      const res = await request('/sc/browser-import', { method: 'POST', body: '{}', timeout: 60000 });
+      if (res && res.ok && res.account) {
+        await boundAccount(res.account);
+      } else {
+        if (sub) sub.textContent = (res && res.error) || 'Сессия ещё не найдена — войдите в SoundCloud в браузере';
+        toast((res && res.error) || 'Вход не найден', 'error', 4000);
+      }
+    } catch (e) {
+      toast(e.message, 'error', 4000);
+    }
     return;
   }
-  // Повторный клик — проверить прямо сейчас, не дожидаясь опроса.
-  if (hint) hint.textContent = 'Забираем ключи…';
   try {
-    const res = await request('/sc/browser-import', { method: 'POST', body: '{}', timeout: 60000 });
-    if (res && res.ok && res.account) {
-      boundAccount(res.account);
-    } else {
-      if (hint) hint.textContent = 'Войдите в браузере — вход подхватится сам…';
-      toast((res && res.error) || 'Вход не найден', 'error', 4000);
-    }
+    await request('/sc/open-login', { method: 'POST', timeout: 15000 });
+    accountLoginPending = true;
+    if (hint) hint.textContent = 'Ожидание входа в браузере…';
+    showBrowserLoginOverlay('Войдите в SoundCloud в открывшемся окне — плеер подхватит сессию сам');
+    pollBrowserImport(
+      (account, err) => {
+        if (account) {
+          boundAccount(account);
+          return;
+        }
+        accountLoginPending = false;
+        hideBrowserLoginOverlay();
+        if (hint) hint.textContent = '← → — выбор · Enter — войти';
+        toast(err === 'timeout'
+          ? 'Время ожидания истекло — попробуйте ещё раз'
+          : 'Вход не найден — попробуйте снова', 'error', 4200);
+      },
+      (tries, lastErr) => {
+        const sub = $('#browserLoginSub');
+        if (!sub) return;
+        if (lastErr) sub.textContent = lastErr;
+        else if (tries > 8) sub.textContent = 'Всё ещё ждём… убедитесь, что вошли на soundcloud.com не в инкогнито';
+        else sub.textContent = 'Войдите в SoundCloud в открывшемся окне — плеер подхватит сессию сам';
+      },
+    );
   } catch (e) {
-    if (hint) hint.textContent = 'Войдите в браузере — вход подхватится сам…';
-    toast(e.message, 'error', 4000);
+    accountLoginPending = false;
+    hideBrowserLoginOverlay();
+    toast(e.message, 'error');
   }
 }
 
+function cancelBrowserLogin() {
+  stopLoginPolling();
+  accountLoginPending = false;
+  hideBrowserLoginOverlay();
+  const hint = $('#accountHint');
+  if (hint) hint.textContent = '← → — выбор · Enter — войти';
+  toast('Вход через браузер отменён', 'info', 2200);
+}
+
 let accountsEntered = false;
-async function enterAccounts() {
-  if (accountsEntered) return;
+let skipAutoLogin = false; // после «Выйти» не прыгаем обратно в плеер
+
+/** Показать экран выбора аккаунтов (первый запуск / после «Выйти»). */
+function showAccountPicker() {
+  hideSessionResume();
+  hideBrowserLoginOverlay();
   const view = document.getElementById('loginView');
-  if (!view || view.hidden || state.launched) return;
-  accountsEntered = true;
-  view.classList.add('account-mode');
+  if (view) {
+    view.hidden = false;
+    view.classList.add('account-mode');
+    view.classList.remove('account-enter', 'session-resuming');
+  }
+  document.body.classList.remove('app-on');
+  const dash = $('#dashboard');
+  if (dash) dash.hidden = true;
   const acc = $('#accountView');
   if (acc) acc.hidden = false;
-  // renderAccountTiles не бросает: гость рисуется сразу, SC — фоном.
-  try { await renderAccountTiles(); } catch (e) {}
-  // Если сплэш уже ведёт частицы — не перезапускаем, они перетекают
-  // на окно входа как есть. Свой движок — только когда сплэша не было.
   if (!window.__bootParticles) {
     try {
-      if (typeof ps5Engine !== 'undefined' && $('#accountParticles')) ps5Engine.start($('#accountParticles'));
+      if (typeof ps5Engine !== 'undefined' && $('#accountParticles')) {
+        ps5Engine.start($('#accountParticles'));
+      }
     } catch (e) {}
   }
+}
+
+async function enterAccounts(opts) {
+  const force = !!(opts && opts.force);
+  const noAuto = !!(opts && opts.noAuto) || skipAutoLogin;
+  const view = document.getElementById('loginView');
+  if (!view) return;
+  if (!force) {
+    if (accountsEntered) return;
+    if (view.hidden || state.launched) return;
+  }
+  accountsEntered = true;
+  state.launched = false;
+  view.hidden = false;
+  view.classList.add('account-mode');
+  view.classList.remove('account-enter');
+  document.body.classList.remove('app-on');
+  const dash = $('#dashboard');
+  if (dash) dash.hidden = true;
+
+  // Сохранённый профиль → тихий вход, без плиток (чтобы не ткнули «не туда»).
+  const last = noAuto ? null : loadJSON(PROFILE_KEY, null);
+  const canResume = last && last.id && !noAuto;
+
+  if (canResume) {
+    showSessionResume(last.nick ? `С возвращением, ${last.nick}` : 'Восстанавливаем ваш профиль');
+    // Тянем аккаунты с сервера
+    let data = null;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        data = await request('/sc/accounts', { timeout: 8000 });
+        accountCache = data;
+        break;
+      } catch (e) {
+        if (attempt < 7) await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+    if (state.launched || skipAutoLogin) return;
+
+    if (last.id === 'guest') {
+      hideSessionResume();
+      await onAccountTile('guest');
+      return;
+    }
+    const has = data && (data.accounts || []).some((a) => a.id === last.id);
+    if (has) {
+      // Небольшая пауза только для ощущения «вход», без показа плиток
+      await new Promise((r) => setTimeout(r, 280));
+      if (!state.launched && !skipAutoLogin) {
+        await onAccountTile(last.id);
+        return;
+      }
+    }
+    // Профиль пропал — показываем выбор
+    hideSessionResume();
+  }
+
+  // Первый запуск / после выхода / профиль не найден
+  showAccountPicker();
+  try { await renderAccountTiles(); } catch (e) {}
+}
+
+/** Выйти из текущего профиля → экран выбора аккаунтов (токены SC не удаляются). */
+async function logoutToAccounts() {
+  skipAutoLogin = true;
+  accountsEntered = false;
+  // Останавливаем воспроизведение, чтобы не играло «под» экраном входа.
+  try {
+    if (typeof audio !== 'undefined' && audio) { audio.pause(); }
+    if (typeof audioB !== 'undefined' && audioB) { audioB.pause(); }
+  } catch (e) {}
+  try {
+    if (typeof closeNowPlaying === 'function') {
+      const np = $('#nowPlaying');
+      if (np && !np.hidden) {
+        np.hidden = true;
+        np.classList.remove('closing', 'gsap-active');
+      }
+    }
+  } catch (e) {}
+  try { if (typeof ps5Engine !== 'undefined') ps5Engine.stop(); } catch (e) {}
+  // На сервере — гость (токены в sc_accounts.json остаются).
+  try {
+    await request('/sc/accounts/active', {
+      method: 'POST',
+      body: JSON.stringify({ id: 'guest' }),
+      timeout: 10000,
+    });
+  } catch (e) { /* офлайн — всё равно показываем выбор */ }
+  // Сбрасываем «последний профиль» для авто-входа, но аккаунты на экране остаются.
+  try { localStorage.removeItem(PROFILE_KEY); } catch (e) {}
+  state.profile = { type: 'guest', id: 'guest', nick: 'Гость', avatar: '' };
+  try { setUser('Гость', '', 'Выберите аккаунт'); } catch (e) {}
+  const btn = $('#launchLocal');
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = '<span>Открыть плеер</span><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>';
+  }
+  // Скрываем сайдбар-профиль до нового входа
+  try {
+    const pb = $('#profileButton');
+    if (pb) pb.hidden = true;
+  } catch (e) {}
+  await enterAccounts({ force: true, noAuto: true });
+  toast('Вы вышли — выберите аккаунт', 'info', 2800);
 }
 
 async function launchLocalPlayer(profile) {
   const btn = $('#launchLocal');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span>Загрузка…</span>'; }
+  hideSessionResume();
+  hideBrowserLoginOverlay();
+  stopLoginPolling();
+  accountLoginPending = false;
   // Show the player immediately so the button always works,
   // even if IndexedDB is slow/unavailable in this webview.
   document.body.classList.add('app-on');
   state.launched = true;
-  if ($('#loginView')) $('#loginView').hidden = true;
+  if ($('#loginView')) {
+    $('#loginView').hidden = true;
+    $('#loginView').classList.remove('session-resuming', 'account-mode');
+  }
   if ($('#dashboard')) $('#dashboard').hidden = false;
   // Клик по «Открыть плеер» передаёт сюда Event — это не профиль.
   const isProf = profile && typeof profile === 'object' && !(profile instanceof Event)
@@ -6984,6 +7022,13 @@ function wireEvents() {
   $$('.nav-link').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)));
   $('.brand')?.addEventListener('click', () => { if (state.launched) switchView('library'); });
   $('#profileButton')?.addEventListener('click', () => switchView('settings'));
+  $('#logoutAccountBtn')?.addEventListener('click', () => { logoutToAccounts(); });
+  $('#browserLoginCancel')?.addEventListener('click', () => { cancelBrowserLogin(); });
+  $('#browserLoginRecheck')?.addEventListener('click', () => {
+    if (!accountLoginPending) { accountLoginFlow(); return; }
+    // Принудительная проверка во время ожидания
+    accountLoginFlow();
+  });
 
   $('#dashAddTrack')?.addEventListener('click', () => $('#trackFileInput')?.click());
   $('#addTrackButton')?.addEventListener('click', () => $('#trackFileInput')?.click());
@@ -8256,11 +8301,7 @@ setTimeout(bootApp, 300);
     if ((bass > avg * 1.15 && bass > 0.15 && delta > 0.04) || (bass > 0.92 && delta > 0.02)) {
       if (now - lastBeat > 130) {
         lastBeat = now;
-<<<<<<< Updated upstream
-        const sensitivity = clamp(Number(config.beatSensitivity) || 2.2, 0.1, 8);
-=======
         const sensitivity = clamp(Number(config.beatSensitivity) || 1.0, 0.1, 8);
->>>>>>> Stashed changes
         A.beat = clamp(Math.max(bass * sensitivity, delta * sensitivity * 3), 0.3, 4);
         for (const fn of beatListeners) safe(() => fn(clamp(A.beat, 0, 4)));
       }
@@ -8955,12 +8996,10 @@ setTimeout(bootApp, 300);
 
 
 /* ============================================================
-   Umbrella Player — стартовая заставка (PS5 + частицы большого плеера)
-   Встроена в экран запуска (#loginView): чёрный холд → частицы
-   собираются в название UMBRELLA PLAYER → оно светится → холд →
-   название гаснет, частицы рассыпаются по экрану и БЕЗ рестарта
-   остаются плавать на окне входа. Включается/выключается
-   в Настройках → Живой интерфейс.
+   Umbrella Player — стартовая заставка в духе PS5
+   Чёрный экран → вспышка искр из центра → искры летят и парят →
+   белый логотип → мягкий dissolve → окно входа.
+   Без «сборки в кучу»: частицы только разлетаются и свободно парят.
    ============================================================ */
 
 (() => {
@@ -8977,26 +9016,27 @@ setTimeout(bootApp, 300);
 
   const reduce = (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) || false;
 
-  /* PS5-тайминги: чёрный холд → лого IN → холд → dissolve → единый вход launch. */
+  /* Тайминги ближе к PS5: чёрный холд → вспышка → лого → холд → dissolve */
   const T = reduce
-    ? { hold: 250, logoIn: 500, stay: 500, out: 400, enter: 500 }
-    : { hold: 750, logoIn: 1600, stay: 1300, out: 850, enter: 1100 };
+    ? { hold: 200, burst: 400, logoIn: 500, stay: 450, out: 350 }
+    : { hold: 700, burst: 900, logoIn: 1400, stay: 1200, out: 900 };
 
   const run = () => {
     const view = document.getElementById('loginView');
-    if (!view || view.hidden) return;              // плеер уже открыт — заставка не нужна
+    if (!view || view.hidden) return;
     if (view.querySelector('.boot-word')) return;
 
+    // Белый PS5-вордмарк
     const word = document.createElement('div');
     word.className = 'boot-word';
     word.setAttribute('aria-hidden', 'true');
     word.innerHTML =
-      '<span class="boot-mark"><svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.4 14.2A8.5 8.5 0 0 1 9.8 3.6a8.5 8.5 0 1 0 10.6 10.6z"/></svg></span>' +
+      '<span class="boot-mark"><svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"><path d="M20.4 14.2A8.5 8.5 0 0 1 9.8 3.6a8.5 8.5 0 1 0 10.6 10.6z"/></svg></span>' +
       '<b>UMBRELLA</b><b class="boot-player">PLAYER</b>';
     view.appendChild(word);
 
-    // Частицы большого плеера ведут весь сплэш и остаются жить на экране
-    // входа: сбор в название → свечение → разлёт по экрану. Без рестарта.
+    // Движок частиц большого плеера: boot-частицы стартуют из центра
+    // с разлётом наружу — это и есть «искры PS5».
     let engineOn = false;
     if (!reduce) {
       try {
@@ -9010,43 +9050,56 @@ setTimeout(bootApp, 300);
       } catch (e) { engineOn = false; }
     }
 
-    // Чёрный экран PS5: прячем launch-контент до dissolve.
     view.classList.add('boot-run');
 
-    let done = false;
     const timers = [];
     const later = (fn, ms) => { const id = setTimeout(fn, ms); timers.push(id); return id; };
+    let done = false;
 
-    chime();
+    try { chime(); } catch (e) {}
 
-    // Фаза 1: частицы собираются в название, оно проявляется и светится.
+    // Дополнительная вспышка искр из центра (burst), как при включении PS5
     later(() => {
-      if (done) return;
-      try { if (engineOn && typeof ps5Engine !== 'undefined') ps5Engine.gather(); } catch (e) {}
-      word.classList.add('boot-in', 'boot-glow');
+      if (!engineOn) return;
+      try {
+        // Несколько волн разлёта
+        if (typeof burstPS5Particles === 'function') burstPS5Particles();
+        setTimeout(() => { try { burstPS5Particles(); } catch (e) {} }, 180);
+        setTimeout(() => { try { burstPS5Particles(); } catch (e) {} }, 360);
+      } catch (e) {}
     }, T.hold);
-    // Фаза 2: холд — название светится, пыль держится вокруг него.
-    later(() => { if (!done) { word.classList.remove('boot-in'); word.classList.add('boot-hold'); } },
-      T.hold + T.logoIn + 60);
-    // Фаза 3: название гаснет, частицы рассыпаются по экрану и остаются
-    // плавать на окне входа (движок не перезапускается).
+
+    // Логотип появляется поверх парящих искр (без gather в кучу!)
+    later(() => {
+      word.classList.add('boot-in');
+    }, T.hold + T.burst * 0.55);
+
+    later(() => {
+      word.classList.add('boot-glow', 'boot-hold');
+    }, T.hold + T.burst + T.logoIn * 0.5);
+
     const finish = (fast) => {
       if (done) return;
       done = true;
       timers.forEach(clearTimeout);
-      try { if (engineOn && typeof ps5Engine !== 'undefined') ps5Engine.release(); } catch (e) {}
-      word.classList.remove('boot-in', 'boot-hold', 'boot-glow');
+      word.classList.remove('boot-hold', 'boot-in', 'boot-glow');
       word.classList.add('boot-gone');
-      view.classList.add('boot-lit', 'from-boot');
+      // Искры НЕ собираем в кучу — просто отпускаем парить / гаснуть естеств.
+      // release только если случайно был gather (не вызываем gather вообще).
+      try {
+        if (engineOn && typeof ps5Engine !== 'undefined' && ps5Engine.release) {
+          // no-op если gathering=false
+          ps5Engine.release();
+        }
+      } catch (e) {}
+
+      const outMs = fast ? 280 : T.out;
       later(() => {
-        word.remove();
-        view.classList.remove('boot-run', 'boot-lit');
-        // from-boot снимаем с задержкой, чтобы riseIn-каскад не сработал ретроспективно.
-        setTimeout(() => view.classList.remove('from-boot'), fast ? 100 : T.enter + 200);
-        // Порядок как у PS5: сплэш → окно входа → приложение.
+        view.classList.remove('boot-run');
+        view.classList.add('boot-lit', 'from-boot');
+        try { word.remove(); } catch (e) {}
+        setTimeout(() => view.classList.remove('from-boot'), fast ? 80 : T.out + 180);
         try { enterAccounts(); } catch (e) {}
-        // Плитки красились под сплэшем (анимации входа уже отыграли вхолостую) —
-        // перезапускаем каскад, чтобы вход выглядел входом.
         try {
           const av = document.getElementById('accountView');
           if (av && !av.hidden && view.classList.contains('account-mode')) {
@@ -9056,21 +9109,20 @@ setTimeout(bootApp, 300);
             tiles.forEach((t) => { t.style.animation = ''; });
           }
         } catch (e) {}
-      }, fast ? 350 : T.out);
+      }, outMs);
+
       document.removeEventListener('pointerdown', onSkip, true);
       document.removeEventListener('keydown', onSkip, true);
     };
     const onSkip = () => finish(true);
-
     document.addEventListener('pointerdown', onSkip, true);
     document.addEventListener('keydown', onSkip, true);
-    later(() => finish(false), T.hold + T.logoIn + T.stay + T.out + 400);   // страховка от залипания
+    later(() => finish(false), T.hold + T.burst + T.logoIn + T.stay + T.out);
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
   else run();
 
-  /** Короткий нарастающий тон, если браузер разрешил звук без жеста. */
   function chime() {
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -9080,21 +9132,23 @@ setTimeout(bootApp, 300);
       const now = c.currentTime;
       const g = c.createGain();
       g.gain.setValueAtTime(0.0001, now);
-      g.gain.exponentialRampToValueAtTime(0.08, now + 1.8);
-      g.gain.exponentialRampToValueAtTime(0.0001, now + 3.4);
+      g.gain.exponentialRampToValueAtTime(0.07, now + 1.6);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 3.5);
       g.connect(c.destination);
-      [110, 220, 329.6, 440].forEach((f, i) => {
+      // Мягкий восходящий аккорд, близкий к «включению»
+      [110, 165, 220, 330].forEach((f, i) => {
         const o = c.createOscillator();
         o.type = 'sine';
-        o.frequency.setValueAtTime(f * 0.995, now);
-        o.frequency.linearRampToValueAtTime(f, now + 2.1);
+        o.frequency.setValueAtTime(f * 0.992, now);
+        o.frequency.linearRampToValueAtTime(f, now + 2.0);
         const og = c.createGain();
-        og.gain.value = 1 / (i + 1.4);
+        og.gain.value = 1 / (i + 1.5);
         o.connect(og); og.connect(g);
         o.start(now); o.stop(now + 3.6);
       });
-      setTimeout(() => safeClose(c), 4000);
+      setTimeout(() => { try { c.close(); } catch (e) {} }, 4000);
     } catch (e) {}
-    function safeClose(c) { try { c.close(); } catch (e) {} }
   }
 })();
+
+

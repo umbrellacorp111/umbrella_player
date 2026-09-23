@@ -29,6 +29,8 @@ def main() -> None:
     else:
         storage = os.path.join(os.path.dirname(os.path.abspath(__file__)), "user_data")
     os.makedirs(storage, exist_ok=True)
+    # Единый каталог данных для токенов SC / аккаунтов / логов
+    os.environ.setdefault("APP_DATA_DIR", storage)
     from yt_dlp_updater import check_and_update
     check_and_update(root, storage, logging.getLogger("umbrella"))
 

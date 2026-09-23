@@ -137,6 +137,28 @@
             <p class="account-ver" id="accountVer"></p>
           </div>
         </div>
+
+        <!-- Тихий авто-вход после сплэша (профиль уже сохранён) -->
+        <div class="session-overlay" id="sessionResumeOverlay" hidden aria-live="polite">
+          <div class="session-overlay-card">
+            <div class="session-spinner" aria-hidden="true"></div>
+            <p class="session-overlay-title">Вход…</p>
+            <p class="session-overlay-sub" id="sessionResumeSub">Восстанавливаем ваш профиль</p>
+          </div>
+        </div>
+
+        <!-- Ожидание входа через браузер SoundCloud -->
+        <div class="session-overlay session-overlay-browser" id="browserLoginOverlay" hidden aria-live="polite">
+          <div class="session-overlay-card">
+            <div class="session-spinner" aria-hidden="true"></div>
+            <p class="session-overlay-title">Вход через браузер</p>
+            <p class="session-overlay-sub" id="browserLoginSub">Войдите в SoundCloud в открывшемся окне — плеер подхватит сессию сам</p>
+            <div class="session-overlay-actions">
+              <button type="button" class="btn btn-ghost btn-sm" id="browserLoginRecheck">Проверить сейчас</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="browserLoginCancel">Отмена</button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- ── Dashboard ── -->
@@ -406,7 +428,13 @@
                 <h2 id="settingsName"></h2>
                 <p id="settingsId"></p>
               </div>
-              <span class="status-dot"><i></i> Локальный режим</span>
+              <div class="user-row-actions">
+                <span class="status-dot"><i></i> Локальный режим</span>
+                <button type="button" class="btn btn-ghost btn-sm" id="logoutAccountBtn" title="Выйти из аккаунта">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                  <span>Выйти</span>
+                </button>
+              </div>
             </div>
 
             <div class="settings-group">

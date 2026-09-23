@@ -12,6 +12,8 @@ LOG_FILE = ROOT / "server.log"
 try:
     storage = ROOT / "user_data"
     storage.mkdir(parents=True, exist_ok=True)
+    import os
+    os.environ.setdefault("APP_DATA_DIR", str(storage))
     from yt_dlp_updater import check_and_update
     check_and_update(ROOT, storage)
     from server import PORT, bind_server, open_browser
