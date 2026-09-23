@@ -66,13 +66,14 @@ framework, no linter config.
   buckets (`listenTick` 1s interval, flush every 20s + on `pagehide`).
   Dashboard `lstatTime` uses buckets, falls back to durations sum.
 - Env knobs: `HOST`/`PORT`, `MB_UA`, `UMBRELLA_UA`,
-  `ZVUK_TOKEN` (falls back to `zvuk_token.txt`),
-  `APP_DATA_DIR`/`APP_ROOT`.
+  `SC_OAUTH_TOKEN` (falls back to `sc_token.txt`), `SC_APP_ID`/`SC_APP_SECRET`
+  (fall back to `sc_app.txt`), `APP_DATA_DIR`/`APP_ROOT`.
 - Secrets and runtime dirs are gitignored — never commit `tg_token.txt`,
-  `zvuk_token.txt`, `cookies.txt`, `user_data/`, `_sc_cache/`,
-  `sc_music/`, `build/`, `dist/`, `*.log`.
-- Deps: `SOVAKOD/requirements.txt` (`yt-dlp`, `pywebview`, `syncedlyrics`,
-  `zvuk-music`). Startup runs `yt_dlp_updater.check_and_update()`; update
+  `sc_token.txt`, `sc_app.txt`, `sc_accounts.json`, `cookies.txt`,
+  `user_data/`, `_sc_cache/`, `sc_music/`, `build/`, `dist/`, `*.log`.
+- Deps: `SOVAKOD/requirements.txt` (`yt-dlp`, `pywebview`, `syncedlyrics`).
+  SoundCloud-only: no YouTube, no Zvuk anywhere (removed). Startup runs
+  `yt_dlp_updater.check_and_update()`; update
   check via `app_updater.fetch_update()` against `UPDATE_MANIFEST_URL` in
   `app_version.py`. `updates/latest.json` is a stub (empty
   `packageUrl`/`sha256`) until release fills it.

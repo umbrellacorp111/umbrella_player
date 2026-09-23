@@ -45,8 +45,6 @@ ARTIST_IMG_TTL = 86400
 ARTIST_BIO_TTL = 86400
 WIKI_PAGE_TTL = 86400
 SC_URL_TTL = 480  # 8 мин — подписанные URL SoundCloud живут ~10 мин, дольше кэшировать нельзя
-ZVUK_URL_TTL = 2400
-ZVUK_SEARCH_TTL = 600
 
 # ---------------------------------------------------------------------------
 # Limits / Concurrency

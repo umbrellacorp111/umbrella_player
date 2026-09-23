@@ -141,8 +141,6 @@ from config import (
     SC_URL_TTL,
     WIKI_PAGE_TTL,
     YDL_CONCURRENCY,
-    ZVUK_SEARCH_TTL,
-    ZVUK_URL_TTL,
 )
 
 _force_utf8_stdio()
@@ -191,19 +189,295 @@ SC_JOBS: dict[str, dict] = {}
 SC_STREAM_LOCKS: dict[str, threading.Lock] = {}
 SC_STREAM_LOCKS_GUARD = threading.Lock()
 SC_JOBS_GUARD = threading.Lock()
-ZVUK_TOKEN = os.getenv("ZVUK_TOKEN", "").strip().lstrip("\ufeff")
-if not ZVUK_TOKEN:
+# SoundCloud OAuth: анонимный api-v2 отдаёт 401, поэтому yt-dlp ходит
+# с токеном пользователя (--username oauth --password TOKEN).
+# Источник: env SC_OAUTH_TOKEN, иначе APP_DATA_DIR/sc_token.txt
+# (сохраняется из Настроек, см. handle_sc_token).
+SC_TOKEN_FILE = APP_DATA_DIR / "sc_token.txt"
+SC_OAUTH_TOKEN = os.getenv("SC_OAUTH_TOKEN", "").strip().lstrip("\ufeff")
+
+
+def reload_sc_token() -> str:
+    """Перечитать токен SoundCloud с диска (после сохранения из Настроек)."""
+    global SC_OAUTH_TOKEN
+    if not SC_OAUTH_TOKEN:
+        try:
+            if SC_TOKEN_FILE.is_file():
+                SC_OAUTH_TOKEN = SC_TOKEN_FILE.read_text(encoding="utf-8-sig").strip().lstrip("\ufeff")
+        except Exception:
+            pass
+    return SC_OAUTH_TOKEN
+
+
+reload_sc_token()
+
+# --- Уровень 2: credentials приложения (Client Credentials flow) ---
+# Регистрация: soundcloud.com/you/apps (может требовать Artist Pro).
+# Сервер сам меняет id+secret на access_token (~1 час) и обновляет его,
+# поэтому связка не отваливается при ротации публичных client_id.
+# Формат sc_app.txt: первая строка — client_id, вторая — client_secret.
+SC_APP_FILE = APP_DATA_DIR / "sc_app.txt"
+SC_APP_ID = os.getenv("SC_APP_ID", "").strip()
+SC_APP_SECRET = os.getenv("SC_APP_SECRET", "").strip()
+SC_APP_TOKEN_URL = os.getenv("SC_TOKEN_URL", "https://secure.soundcloud.com/oauth/token")
+SC_APP_TOKEN_MEM: dict = {}
+SC_APP_TOKEN_LOCK = threading.Lock()
+
+
+def _read_sc_app() -> tuple[str, str]:
+    """Актуальные (id, secret): память/env → файл."""
+    cid, sec = SC_APP_ID, SC_APP_SECRET
+    if not (cid and sec):
+        try:
+            if SC_APP_FILE.is_file():
+                lines = [ln.strip() for ln in SC_APP_FILE.read_text(encoding="utf-8-sig").splitlines()]
+                lines = [ln for ln in lines if ln and not ln.startswith("#")]
+                if len(lines) >= 2:
+                    cid, sec = lines[0], lines[1]
+                elif len(lines) == 1 and ":" in lines[0]:
+                    cid, sec = [p.strip() for p in lines[0].split(":", 1)]
+        except Exception:
+            pass
+    return cid, sec
+
+
+def _sc_app_token_cache() -> Path:
+    SC_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return SC_CACHE_DIR / "sc_app_token.json"
+
+
+def _sc_app_token_request(payload: dict[str, str], basic: str | None = None) -> dict | None:
+    """POST на oauth/token строго по докам SoundCloud. Возвращает JSON или None."""
+    import base64
+    import urllib.parse
+    import urllib.request
     try:
-        _tok_file = APP_DATA_DIR / "zvuk_token.txt"
-        if _tok_file.is_file():
-            ZVUK_TOKEN = _tok_file.read_text(encoding="utf-8-sig").strip().lstrip("\ufeff")
-    except Exception:
+        data = urllib.parse.urlencode(payload).encode("ascii")
+        headers = {
+            "accept": "application/json; charset=utf-8",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": SERVER_VERSION,
+        }
+        if basic is not None:
+            headers["Authorization"] = "Basic " + base64.b64encode(basic.encode("utf-8")).decode("ascii")
+        req = urllib.request.Request(SC_APP_TOKEN_URL, data=data, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            parsed = json.loads(resp.read().decode("utf-8"))
+            return parsed if isinstance(parsed, dict) else None
+    except Exception as error:
+        log.warning("SoundCloud app token request failed: %s", error)
+        return None
+
+
+def _sc_app_access_token() -> str:
+    """Валидный access_token приложения или ''. Кэш + refresh, один обмен за раз."""
+    cid, sec = _read_sc_app()
+    if not (cid and sec):
+        return ""
+    now = time.time()
+    cached = SC_APP_TOKEN_MEM.get("token")
+    if not cached:
+        # Подхватить переживший рестарт токен из файлового кэша.
+        try:
+            saved = json.loads(_sc_app_token_cache().read_text(encoding="utf-8"))
+            if isinstance(saved, dict) and saved.get("token"):
+                SC_APP_TOKEN_MEM.update({
+                    "token": str(saved.get("token") or ""),
+                    "refresh_token": str(saved.get("refresh_token") or ""),
+                    "expires_at": float(saved.get("expires_at") or 0),
+                })
+                cached = SC_APP_TOKEN_MEM.get("token")
+        except (OSError, ValueError):
+            pass
+    if cached and (SC_APP_TOKEN_MEM.get("expires_at", 0) - now) > 300:
+        return str(cached)
+    with SC_APP_TOKEN_LOCK:
+        cached = SC_APP_TOKEN_MEM.get("token")
+        if cached and (SC_APP_TOKEN_MEM.get("expires_at", 0) - time.time()) > 300:
+            return str(cached)
+        # Пробуем refresh (бережём лимиты: 50 токенов/12ч на приложение).
+        data = None
+        if SC_APP_TOKEN_MEM.get("refresh_token"):
+            data = _sc_app_token_request({
+                "grant_type": "refresh_token",
+                "client_id": cid,
+                "client_secret": sec,
+                "refresh_token": SC_APP_TOKEN_MEM["refresh_token"],
+            })
+        if not data or not data.get("access_token"):
+            data = _sc_app_token_request(
+                {"grant_type": "client_credentials"}, basic=f"{cid}:{sec}")
+        if not data or not data.get("access_token"):
+            return ""
+        SC_APP_TOKEN_MEM["token"] = str(data["access_token"])
+        SC_APP_TOKEN_MEM["refresh_token"] = str(data.get("refresh_token") or SC_APP_TOKEN_MEM.get("refresh_token") or "")
+        try:
+            SC_APP_TOKEN_MEM["expires_at"] = now + int(data.get("expires_in") or 3600)
+        except (TypeError, ValueError):
+            SC_APP_TOKEN_MEM["expires_at"] = now + 3600
+        try:
+            _sc_app_token_cache().write_text(json.dumps({
+                "token": SC_APP_TOKEN_MEM["token"],
+                "refresh_token": SC_APP_TOKEN_MEM["refresh_token"],
+                "expires_at": SC_APP_TOKEN_MEM["expires_at"],
+            }), encoding="utf-8")
+        except OSError:
+            pass
+        return str(SC_APP_TOKEN_MEM["token"])
+
+
+def sc_auth_level() -> str:
+    """Уровень авторизации SC: 'oauth' | 'app' | 'none'."""
+    if SC_OAUTH_TOKEN or reload_sc_token():
+        return "oauth"
+    cid, sec = _read_sc_app()
+    if cid and sec:
+        return "app"
+    return "none"
+
+
+# --- Профили: гость (встроенный ключ) + аккаунты SoundCloud ---
+# Аккаунт = {id, nick, avatar, token, added}. Токены только здесь и в
+# sc_token.txt (зеркало активного для совместимости). Файл — секрет.
+SC_ACCOUNTS_FILE = APP_DATA_DIR / "sc_accounts.json"
+
+
+def _sc_accounts_load() -> dict:
+    data: dict = {"accounts": [], "active": "guest"}
+    try:
+        if SC_ACCOUNTS_FILE.is_file():
+            parsed = json.loads(SC_ACCOUNTS_FILE.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                if isinstance(parsed.get("accounts"), list):
+                    data["accounts"] = [a for a in parsed["accounts"] if isinstance(a, dict) and a.get("id")]
+                if parsed.get("active") in ("guest", *[a.get("id") for a in data["accounts"]]):
+                    data["active"] = parsed.get("active")
+    except (OSError, ValueError):
         pass
-ZVUK_URL_CACHE: dict[str, tuple[str, float]] = {}
-ZVUK_SEARCH_CACHE: dict[str, tuple[list[dict], float]] = {}
-ZVUK_CLIENT_LOCK = threading.Lock()
-ZVUK_CLIENT: object | None = None
-ZVUK_ANON_TOKEN: str | None = None
+    # Миграция: lone sc_token.txt (старый формат) → аккаунт «SoundCloud».
+    if not data["accounts"]:
+        legacy = reload_sc_token()
+        if legacy:
+            data["accounts"] = [{"id": "legacy", "nick": "SoundCloud", "avatar": "",
+                                 "token": legacy, "added": time.time()}]
+            data["active"] = "legacy"
+            _sc_accounts_save(data)
+    if data["active"] != "guest" and not any(a.get("id") == data["active"] for a in data["accounts"]):
+        data["active"] = "guest"
+    return data
+
+
+def _sc_accounts_save(data: dict) -> None:
+    try:
+        SC_ACCOUNTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = SC_ACCOUNTS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, SC_ACCOUNTS_FILE)
+    except OSError as error:
+        log.warning("SoundCloud accounts save failed: %s", error)
+
+
+def _sc_apply_active(data: dict) -> str:
+    """Выбранный аккаунт → память + зеркало sc_token.txt. Возвращает токен."""
+    global SC_OAUTH_TOKEN
+    active = data.get("active", "guest")
+    token = ""
+    if active != "guest":
+        for acc in data.get("accounts", []):
+            if acc.get("id") == active and acc.get("token"):
+                token = str(acc["token"])
+                break
+    SC_OAUTH_TOKEN = token
+    try:
+        if token:
+            SC_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+            SC_TOKEN_FILE.write_text(token + "\n", encoding="utf-8")
+        elif SC_TOKEN_FILE.is_file():
+            SC_TOKEN_FILE.unlink()
+    except OSError:
+        pass
+    return token
+
+
+_sc_apply_active(_sc_accounts_load())
+
+
+def _sc_fetch_me(token: str) -> dict:
+    """Профиль по токену: {nick, avatar}. Пусто при неудаче."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(
+            "https://api.soundcloud.com/me",
+            headers={"accept": "application/json; charset=utf-8",
+                     "Authorization": f"OAuth {token}",
+                     "User-Agent": SERVER_VERSION})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            me = json.loads(resp.read().decode("utf-8"))
+        if not isinstance(me, dict):
+            return {}
+        nick = str(me.get("username") or me.get("full_name") or "").strip()
+        avatar = str(me.get("avatar_url") or "").strip()
+        return {"nick": nick, "avatar": avatar} if nick else {}
+    except Exception as error:
+        log.debug("SoundCloud /me failed: %s", error)
+        return {}
+
+
+def _sc_public_accounts(data: dict) -> list[dict]:
+    return [{"id": a.get("id"), "nick": a.get("nick") or "SoundCloud",
+             "avatar": a.get("avatar") or "", "added": a.get("added") or 0}
+            for a in data.get("accounts", [])]
+
+
+# --- Автовход: подхватить oauth_token из браузера пользователя ---
+# Человек логинится в SoundCloud обычным бесплатным аккаунтом в своём
+# браузере, плеер забирает cookie oauth_token и сохраняет как свой токен.
+# Пароль никуда не вводится и не хранится. Нужен yt-dlp (уже зависимость).
+SC_BROWSERS = ("edge", "chrome", "brave", "vivaldi", "opera", "chromium", "firefox")
+
+
+def _sc_browser_oauth_token(browser: str | None = None) -> tuple[str, str]:
+    """Найти oauth_token SoundCloud в куках браузеров. Возвращает (токен, браузер)."""
+    if yt_dlp is None:
+        return "", ""
+    try:
+        from yt_dlp import cookies as _ydl_cookies
+    except Exception:
+        return "", ""
+    names = [browser] if browser else list(SC_BROWSERS)
+    for name in names:
+        try:
+            jar = _ydl_cookies.extract_cookies_from_browser(name)
+        except Exception:
+            continue
+        try:
+            for cookie in jar:
+                domain = (getattr(cookie, "domain", "") or "").lstrip(".")
+                if (getattr(cookie, "name", "") == "oauth_token"
+                        and getattr(cookie, "value", "")
+                        and domain.endswith("soundcloud.com")):
+                    return str(cookie.value), name
+        except Exception:
+            continue
+    return "", ""
+
+
+def _quarantine_sc_token() -> None:
+    """Мёртвый user-токен в сторону: память чистим, файл переименовываем,
+    чтобы следующий вызов не подхватил его снова (и ушёл в пул/app)."""
+    global SC_OAUTH_TOKEN
+    SC_OAUTH_TOKEN = ""
+    try:
+        if SC_TOKEN_FILE.is_file():
+            bad = SC_TOKEN_FILE.with_name("sc_token.txt.bad")
+            try:
+                bad.unlink()
+            except OSError:
+                pass
+            SC_TOKEN_FILE.rename(bad)
+            log.warning("Dead SoundCloud oauth token moved aside")
+    except OSError:
+        pass
 API_TOKEN = secrets.token_urlsafe(32)
 YDL_LIMIT = threading.BoundedSemaphore(YDL_CONCURRENCY)
 EXTERNAL_API_LIMIT = threading.BoundedSemaphore(EXTERNAL_API_CONCURRENCY)
@@ -219,11 +493,181 @@ class ServiceBusyError(RuntimeError):
 def _limited_ydl(options: dict, timeout: float = 0.75):
     if SERVER_STOPPING.is_set() or not YDL_LIMIT.acquire(timeout=timeout):
         raise ServiceBusyError("Сервис занят, повторите через несколько секунд")
+    # Все вызовы здесь — только SoundCloud: подмешиваем OAuth-токен.
+    # Приоритет: токен пользователя → токен приложения (авто) → анонимно.
+    opts = dict(options)
+    opts.setdefault("cachedir", str(SC_CACHE_DIR / "ydl-cache"))
+    token = SC_OAUTH_TOKEN or reload_sc_token() or _sc_app_access_token()
+    if token and "username" not in opts and "password" not in opts:
+        opts["username"] = "oauth"
+        opts["password"] = token
     try:
-        with yt_dlp.YoutubeDL(options) as ydl:
+        with yt_dlp.YoutubeDL(opts) as ydl:
             yield ydl
     finally:
         YDL_LIMIT.release()
+
+
+# --- Уровень 3: пул client_id с ротацией (анонимный режим) ---
+# Публичные ключи SoundCloud периодически отлетают; перебираем известные
+# + подсмотренные на soundcloud.com, пока один не примет API.
+# Порядок важен: первый — проверенно живой (проверка 23.09.2026: 200 OK),
+# остальные — запасные. Ревокация у SoundCloud поключевая: старые ключи
+# могут жить, когда свежие уже мертвы (так и случилось после пересборки:
+# yt-dlp 2026.08.19 тащит мёртвый веб-ключ и перезаписывает им кэш).
+SC_KNOWN_CLIENT_IDS = [
+    "fXuVKzsVXlc6tzniWWS31etd7VHWFUuN",
+    "gxPRNsEq7CDD7Wvem4iymWOq3YfU7KS8",
+    "Pb72ranhoyt6gw7hM7TkzUItXlMWSNSo",
+    "iZIs9mchVcX5lhVRyQGGAYlNPVldzAo",
+]
+SC_IDS_CACHE_FILE = "sc_client_ids.json"
+SC_IDS_TTL = 24 * 3600
+
+
+def _scrape_sc_client_ids() -> list[str]:
+    """Собрать 32-символьные client_id из JS-бандлов soundcloud.com."""
+    import re
+    import urllib.request
+    found: list[str] = []
+    try:
+        req = urllib.request.Request("https://soundcloud.com/", headers={"User-Agent": DEFAULT_UA})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            home = resp.read().decode("utf-8", "replace")
+        for src in re.findall(r'src="(https://[^"]+\.js)"', home)[-8:]:
+            try:
+                rq = urllib.request.Request(src, headers={"User-Agent": DEFAULT_UA})
+                with urllib.request.urlopen(rq, timeout=15) as rs:
+                    js = rs.read().decode("utf-8", "replace")
+                for mid in re.findall(r'client_id["\']?\s*[:=]\s*["\']([A-Za-z0-9]{32})["\']', js):
+                    if mid not in found:
+                        found.append(mid)
+            except Exception:
+                continue
+    except Exception as error:
+        log.debug("SoundCloud client_id scrape failed: %s", error)
+    return found
+
+
+SC_LAST_GOOD_FILE = "sc_last_good_id.txt"
+
+
+def _sc_id_pool() -> list[str]:
+    """Порядок перебора: последний рабочий → известные → скрап-кэш → свежий скрап."""
+    pool: list[str] = []
+    try:
+        last_good = (SC_CACHE_DIR / SC_LAST_GOOD_FILE).read_text(encoding="utf-8").strip()
+        if len(last_good) == 32:
+            pool.append(last_good)
+    except OSError:
+        pass
+    for cid in SC_KNOWN_CLIENT_IDS:
+        if cid not in pool:
+            pool.append(cid)
+    cache_path = SC_CACHE_DIR / SC_IDS_CACHE_FILE
+    try:
+        if cache_path.is_file() and (time.time() - cache_path.stat().st_mtime) < SC_IDS_TTL:
+            saved = json.loads(cache_path.read_text(encoding="utf-8"))
+            if isinstance(saved, list):
+                pool.extend([str(x) for x in saved if isinstance(x, str) and len(x) == 32 and x not in pool])
+    except (OSError, ValueError):
+        pass
+    # Освежаем пул раз в сутки: вдруг хоть один из новых живой, а старые мертвы.
+    try:
+        if not cache_path.is_file() or (time.time() - cache_path.stat().st_mtime) >= SC_IDS_TTL:
+            fresh = _scrape_sc_client_ids()
+            merged = [c for c in pool if c not in fresh] + fresh
+            SC_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(merged[:12]), encoding="utf-8")
+    except OSError:
+        pass
+    return pool or list(SC_KNOWN_CLIENT_IDS)
+
+
+def _remember_sc_good_id(client_id: str) -> None:
+    try:
+        SC_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        (SC_CACHE_DIR / SC_LAST_GOOD_FILE).write_text(client_id, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _pin_sc_client_id(client_id: str) -> None:
+    """Принудительно подставить client_id через кэш yt-dlp (extractor-arg
+    для client_id в этой версии yt-dlp отсутствует)."""
+    try:
+        import importlib.metadata
+        ver = importlib.metadata.version("yt-dlp")
+    except Exception:
+        ver = "0"
+    try:
+        cache_dir = SC_CACHE_DIR / "ydl-cache" / "soundcloud"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / "client_id.json").write_text(
+            json.dumps({"yt-dlp_version": ver, "data": client_id}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _is_sc_auth_error(error: Exception) -> bool:
+    text = str(error)
+    return "401" in text or "403" in text or "Unauthorized" in text or "Forbidden" in text
+
+
+# --- Честный статус сервиса: помним последний итог реальных операций ---
+SC_HEALTH: dict = {"ok": None, "at": 0.0, "detail": ""}
+SC_HEALTH_TTL = 15 * 60
+
+
+def _sc_health_set(ok: bool, detail: str = "") -> None:
+    SC_HEALTH["ok"] = ok
+    SC_HEALTH["at"] = time.time()
+    SC_HEALTH["detail"] = (detail or "")[:200]
+
+
+def sc_alive() -> bool | None:
+    """True — недавно работало; False — недавно падало; None — неизвестно."""
+    if (time.time() - SC_HEALTH["at"]) > SC_HEALTH_TTL:
+        return None
+    return SC_HEALTH["ok"]
+
+
+def _run_ydl_sc(ydl_opts: dict, run):
+    """Выполнить run(ydl). С токеном — одна попытка; если токен протух
+    (401/403) — убираем его и падаем в ротацию пула, а не в ошибку.
+    В анонимном режиме при 401/403 перебираем пул client_id."""
+    user_token = SC_OAUTH_TOKEN or reload_sc_token()
+    app_token = "" if user_token else _sc_app_access_token()
+    if user_token or app_token:
+        try:
+            with _limited_ydl(ydl_opts) as ydl:
+                result = run(ydl)
+            _sc_health_set(True, "token")
+            return result
+        except Exception as error:
+            if not _is_sc_auth_error(error):
+                raise
+            log.warning("SoundCloud token rejected, falling back to client_id pool")
+            if user_token:
+                _quarantine_sc_token()
+            else:
+                SC_APP_TOKEN_MEM.clear()
+    last: Exception | None = None
+    for cid in _sc_id_pool():
+        _pin_sc_client_id(cid)
+        try:
+            with _limited_ydl(ydl_opts) as ydl:
+                result = run(ydl)
+            _remember_sc_good_id(cid)
+            _sc_health_set(True, "pool")
+            return result
+        except Exception as error:
+            last = error
+            if not _is_sc_auth_error(error):
+                raise
+            log.warning("SoundCloud client_id %s… rejected, rotating", cid[:6])
+    _sc_health_set(False, str(last)[:200] if last else "unavailable")
+    raise last if last is not None else RuntimeError("SoundCloud недоступен")
 
 
 @contextmanager
@@ -279,8 +723,7 @@ def _cleanup_caches() -> None:
             (AUDIO_FILE_CACHE, AUDIO_FILE_TTL, 1),
             (ARTIST_IMG_CACHE, ARTIST_IMG_TTL, 2), (ARTIST_BIO_CACHE, ARTIST_BIO_TTL, 0),
             (WIKI_PAGE_CACHE, WIKI_PAGE_TTL, 0),
-            (SC_URL_CACHE, SC_URL_TTL, 2), (ZVUK_URL_CACHE, ZVUK_URL_TTL, 1),
-            (ZVUK_SEARCH_CACHE, ZVUK_SEARCH_TTL, 1),
+            (SC_URL_CACHE, SC_URL_TTL, 2),
         ):
             for key, value in list(cache.items()):
                 timestamp = _cache_timestamp(value, timestamp_index)
@@ -338,8 +781,7 @@ def _sc_download_file(url: str, outtmpl: str) -> str | None:
         "noplaylist": True,
         "outtmpl": outtmpl,
     }
-    with _limited_ydl(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
+    info = _run_ydl_sc(ydl_opts, lambda ydl: ydl.extract_info(url, download=True))
     req = info.get("requested_downloads") or []
     if req and req[0].get("filepath") and os.path.exists(req[0]["filepath"]):
         return req[0]["filepath"]
@@ -420,59 +862,7 @@ for worker_index in range(SC_DOWNLOAD_WORKERS):
     ).start()
 
 
-def _get_zvuk_client():
-    global ZVUK_CLIENT, ZVUK_ANON_TOKEN
-    try:
-        from zvuk_music import Client as ZvukClient
-    except ImportError:
-        return None
-    with ZVUK_CLIENT_LOCK:
-        if ZVUK_CLIENT is not None:
-            return ZVUK_CLIENT
-        token = ZVUK_TOKEN
-        if not token:
-            try:
-                if ZVUK_ANON_TOKEN:
-                    token = ZVUK_ANON_TOKEN
-                else:
-                    token = ZvukClient.get_anonymous_token()
-                    ZVUK_ANON_TOKEN = token
-                    log.info("Zvuk anonymous token obtained")
-            except Exception as e:
-                log.warning("Zvuk anon token failed: %s", e)
-                return None
-        try:
-            ZVUK_CLIENT = ZvukClient(token=token)
-            return ZVUK_CLIENT
-        except Exception as e:
-            log.warning("Zvuk client init failed: %s", e)
-            return None
 
-
-def _zvuk_get_stream_url(track_id: str) -> str:
-    cached = ZVUK_URL_CACHE.get(track_id)
-    now = time.time()
-    if cached and (now - cached[1]) < ZVUK_URL_TTL:
-        return cached[0]
-    client = _get_zvuk_client()
-    if client is None:
-        raise RuntimeError("Zvuk не настроен (нет токена и не удалось получить анонимный)")
-    url = ""
-    try:
-        from zvuk_music import Quality
-        url = client.get_stream_url(track_id, quality=Quality.MID)
-    except Exception as e:
-        log.info("Zvuk MID failed for %s: %s, trying HIGH fallback", track_id, e)
-        try:
-            from zvuk_music import Quality as Q2
-            url = client.get_stream_url(track_id, quality=Q2.MID)
-        except Exception:
-            raise
-    if not url:
-        raise RuntimeError("Не удалось получить ссылку Zvuk")
-    ZVUK_URL_CACHE[track_id] = (url, now)
-    _trim_cache(ZVUK_URL_CACHE, 1)
-    return url
 
 
 def _proxy_stream(handler: SimpleHTTPRequestHandler, upstream, content_type: str | None = None) -> None:
@@ -523,8 +913,7 @@ def _sc_extract_audio_url(page_url: str, fresh: bool = False) -> tuple[str, str,
         "socket_timeout": 20,
         "noplaylist": True,
     }
-    with _limited_ydl(ydl_opts) as ydl:
-        info = ydl.extract_info(page_url, download=False)
+    info = _run_ydl_sc(ydl_opts, lambda ydl: ydl.extract_info(page_url, download=False))
     audio_url = info.get("url") or ""
     if not audio_url:
         for fmt in info.get("formats", []):
@@ -553,8 +942,7 @@ def _sc_search_tracks(text: str, count: int = 15) -> list[dict]:
         "extract_flat": True,
         "default_search": "scsearch",
     }
-    with _limited_ydl(ydl_opts) as ydl:
-        result = ydl.extract_info(f"scsearch{count}:{text}", download=False)
+    result = _run_ydl_sc(ydl_opts, lambda ydl: ydl.extract_info(f"scsearch{count}:{text}", download=False))
     items = []
     for entry in (result.get("entries") or [])[:count]:
         if not isinstance(entry, dict):
@@ -663,7 +1051,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_json({"token": API_TOKEN})
             return
         if route == "/api/version":
-            self.send_json({"version": APP_VERSION})
+            self.send_json({"version": APP_VERSION, "scAuth": sc_auth_level() != "none",
+                            "scAuthLevel": sc_auth_level(), "scAlive": sc_alive()})
             return
         if route == "/api/update":
             update = fetch_update()
@@ -672,17 +1061,14 @@ class AppHandler(SimpleHTTPRequestHandler):
         if route == "/api/sc/library":
             self.handle_sc_library()
             return
+        if route == "/api/sc/accounts":
+            self.handle_sc_accounts()
+            return
+        if route == "/api/sc/me":
+            self.handle_sc_me()
+            return
         if route == "/api/sc/file":
             self.handle_sc_file(parse_qs(parsed.query))
-            return
-        if route == "/api/zvuk/search":
-            self.handle_zvuk_search(parse_qs(parsed.query))
-            return
-        if route == "/api/zvuk/resolve":
-            self.handle_zvuk_resolve(parse_qs(parsed.query))
-            return
-        if route == "/api/zvuk/stream":
-            self.handle_zvuk_stream(parse_qs(parsed.query))
             return
         if route.startswith("/api/"):
             self.send_json({"error": f"Маршрут не найден: {route}"}, HTTPStatus.NOT_FOUND)
@@ -703,6 +1089,40 @@ class AppHandler(SimpleHTTPRequestHandler):
             body = self.read_json()
             if body is not None:
                 self.handle_sc_download(body)
+        elif parsed.path == "/api/sc/token":
+            if not self._authorized():
+                return
+            body = self.read_json()
+            if body is not None:
+                self.handle_sc_token(body)
+        elif parsed.path == "/api/sc/app":
+            if not self._authorized():
+                return
+            body = self.read_json()
+            if body is not None:
+                self.handle_sc_app(body)
+        elif parsed.path == "/api/sc/open-login":
+            if not self._authorized():
+                return
+            try:
+                webbrowser.open("https://soundcloud.com/login")
+            except Exception as error:
+                self.send_json({"error": f"Не удалось открыть браузер: {error}"},
+                               HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            self.send_json({"ok": True})
+        elif parsed.path == "/api/sc/browser-import":
+            if not self._authorized():
+                return
+            body = self.read_json()
+            if body is not None:
+                self.handle_sc_browser_import(body)
+        elif parsed.path == "/api/sc/accounts/active":
+            if not self._authorized():
+                return
+            body = self.read_json()
+            if body is not None:
+                self.handle_sc_accounts_active(body)
         else:
             self.send_json({"error": f"Маршрут не найден: {parsed.path}"}, HTTPStatus.NOT_FOUND)
 
@@ -712,6 +1132,18 @@ class AppHandler(SimpleHTTPRequestHandler):
             if not self._authorized():
                 return
             self.handle_sc_delete(parse_qs(parsed.query))
+        elif parsed.path == "/api/sc/token":
+            if not self._authorized():
+                return
+            self.handle_sc_token_delete()
+        elif parsed.path == "/api/sc/app":
+            if not self._authorized():
+                return
+            self.handle_sc_app_delete()
+        elif parsed.path == "/api/sc/accounts":
+            if not self._authorized():
+                return
+            self.handle_sc_account_delete(parse_qs(parsed.query))
         else:
             self.send_json({"error": f"Маршрут не найден: {parsed.path}"}, HTTPStatus.NOT_FOUND)
 
@@ -1632,8 +2064,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "quiet": True, "no_warnings": True, "socket_timeout": 15,
                     "extract_flat": True, "default_search": "scsearch",
                 }
-                with _limited_ydl(ydl_opts) as ydl:
-                    result = ydl.extract_info(f"scsearch20:{search_title}", download=False)
+                result = _run_ydl_sc(ydl_opts, lambda ydl: ydl.extract_info(f"scsearch20:{search_title}", download=False))
                 items = []
                 for entry in (result.get("entries") or [])[:20]:
                     if not isinstance(entry, dict):
@@ -1673,11 +2104,170 @@ class AppHandler(SimpleHTTPRequestHandler):
         except ValueError:
             count = 15
         try:
-            self.send_json({"tracks": _sc_search_tracks(text, count)})
+            self.send_json({"tracks": _sc_search_tracks(text, count), "scAuth": True,
+                            "scAuthLevel": sc_auth_level()})
         except ServiceBusyError as error:
             self.send_json({"error": str(error)}, HTTPStatus.SERVICE_UNAVAILABLE)
         except Exception as error:
-            self.send_json({"error": f"Ошибка поиска SoundCloud: {error}"}, HTTPStatus.BAD_GATEWAY)
+            msg = str(error)
+            # Публичные ключи отлетают: без авторизации подсказываем оба пути.
+            if _is_sc_auth_error(error) and sc_auth_level() == "none":
+                msg += (" SoundCloud закрыл анонимный доступ. Надёжнее всего — credentials приложения "
+                        "(Настройки → SoundCloud → client_id + client_secret), либо oauth_token из браузера.")
+            self.send_json({"error": f"Ошибка поиска SoundCloud: {msg}", "scAuth": False,
+                            "scAuthLevel": sc_auth_level()},
+                           HTTPStatus.BAD_GATEWAY)
+
+    def handle_sc_token(self, body: dict) -> None:
+        """Сохранить OAuth-токен SoundCloud в sc_token.txt (только с X-Umbrella-Token)."""
+        global SC_OAUTH_TOKEN
+        token = str((body or {}).get("token", "")).strip()
+        if not token or len(token) > 500:
+            self.send_json({"error": "Пустой или слишком длинный токен"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            SC_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+            SC_TOKEN_FILE.write_text(token + "\n", encoding="utf-8")
+        except OSError as error:
+            self.send_json({"error": f"Не удалось сохранить токен: {error}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        SC_OAUTH_TOKEN = token
+        self.send_json({"ok": True})
+
+    def handle_sc_token_delete(self) -> None:
+        """Удалить сохранённый OAuth-токен SoundCloud (только с X-Umbrella-Token)."""
+        global SC_OAUTH_TOKEN
+        SC_OAUTH_TOKEN = ""
+        try:
+            if SC_TOKEN_FILE.is_file():
+                SC_TOKEN_FILE.unlink()
+        except OSError:
+            pass
+        self.send_json({"ok": True})
+
+    def handle_sc_app(self, body: dict) -> None:
+        """Сохранить credentials приложения (client_id + client_secret)."""
+        global SC_APP_ID, SC_APP_SECRET
+        cid = str((body or {}).get("id", "")).strip()
+        sec = str((body or {}).get("secret", "")).strip()
+        if not cid or not sec or len(cid) > 200 or len(sec) > 500:
+            self.send_json({"error": "Нужны client_id и client_secret"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            SC_APP_FILE.parent.mkdir(parents=True, exist_ok=True)
+            SC_APP_FILE.write_text(f"{cid}\n{sec}\n", encoding="utf-8")
+        except OSError as error:
+            self.send_json({"error": f"Не удалось сохранить: {error}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        SC_APP_ID, SC_APP_SECRET = cid, sec
+        SC_APP_TOKEN_MEM.clear()
+        # Сразу проверяем обмен: если неверные — скажем честно, а не молча.
+        token = _sc_app_access_token()
+        self.send_json({"ok": True, "tokenOk": bool(token)})
+
+    def handle_sc_browser_import(self, body: dict) -> None:
+        """Подхватить oauth_token из кук браузера и привязать как аккаунт.
+        Человек входит на soundcloud.com бесплатным аккаунтом, пароль
+        не нужен и не хранится. Повторный импорт того же ника — обновление."""
+        browser = str((body or {}).get("browser", "")).strip() or None
+        if browser and browser not in SC_BROWSERS:
+            self.send_json({"error": f"Неизвестный браузер: {browser}"}, HTTPStatus.BAD_REQUEST)
+            return
+        token, found_in = _sc_browser_oauth_token(browser)
+        if not token:
+            self.send_json({"ok": False, "browser": found_in,
+                            "error": "Вход не найден: войдите в SoundCloud в браузере"},
+                           HTTPStatus.OK)
+            return
+        # Проверяем токен сразу: мёртвый cookie не должен создавать
+        # «успешную» привязку, которая отвалится после перезапуска.
+        me = _sc_fetch_me(token)
+        if not me.get("nick"):
+            self.send_json({"ok": False, "browser": found_in,
+                            "error": "Браузер разлогинен или сессия протухла: выйдите и войдите в SoundCloud заново"},
+                           HTTPStatus.OK)
+            return
+        nick = me.get("nick")
+        data = _sc_accounts_load()
+        acc_id = ""
+        for acc in data["accounts"]:
+            if (acc.get("nick") or "").lower() == nick.lower():
+                acc["token"] = token
+                if me.get("avatar"):
+                    acc["avatar"] = me["avatar"]
+                acc_id = acc["id"]
+                break
+        if not acc_id:
+            acc_id = secrets.token_hex(4)
+            data["accounts"].append({"id": acc_id, "nick": nick, "avatar": me.get("avatar", ""),
+                                     "token": token, "added": time.time()})
+        data["active"] = acc_id
+        _sc_accounts_save(data)
+        _sc_apply_active(data)
+        public = [a for a in _sc_public_accounts(data) if a["id"] == acc_id]
+        self.send_json({"ok": True, "browser": found_in,
+                        "account": public[0] if public else {"id": acc_id, "nick": nick}})
+
+    def handle_sc_accounts(self) -> None:
+        """Список профилей для экрана входа (без токенов)."""
+        data = _sc_accounts_load()
+        self.send_json({"active": data["active"], "accounts": _sc_public_accounts(data),
+                        "guestAlive": sc_alive(), "scAuthLevel": sc_auth_level(),
+                        "guest": {"nick": "Гость"}})
+
+    def handle_sc_me(self) -> None:
+        """Активный профиль: ник + аватар (для сайдбара и статусов)."""
+        data = _sc_accounts_load()
+        active = data.get("active", "guest")
+        if active == "guest":
+            self.send_json({"type": "guest", "nick": "Гость", "avatar": ""})
+            return
+        for acc in _sc_public_accounts(data):
+            if acc["id"] == active:
+                self.send_json({"type": "sc", "nick": acc["nick"], "avatar": acc["avatar"]})
+                return
+        self.send_json({"type": "guest", "nick": "Гость", "avatar": ""})
+
+    def handle_sc_accounts_active(self, body: dict) -> None:
+        """Выбрать активный профиль: 'guest' или id аккаунта."""
+        acc_id = str((body or {}).get("id", "")).strip()
+        data = _sc_accounts_load()
+        if acc_id != "guest" and not any(a.get("id") == acc_id for a in data["accounts"]):
+            self.send_json({"error": "Нет такого профиля"}, HTTPStatus.BAD_REQUEST)
+            return
+        data["active"] = acc_id
+        _sc_accounts_save(data)
+        _sc_apply_active(data)
+        self.send_json({"ok": True, "active": acc_id})
+
+    def handle_sc_account_delete(self, query: dict[str, list[str]]) -> None:
+        """Отвязать аккаунт SoundCloud."""
+        acc_id = (query.get("id", [""])[0] or "").strip()
+        data = _sc_accounts_load()
+        data["accounts"] = [a for a in data["accounts"] if a.get("id") != acc_id]
+        if data.get("active") == acc_id:
+            data["active"] = "guest"
+        _sc_accounts_save(data)
+        _sc_apply_active(data)
+        self.send_json({"ok": True, "active": data["active"]})
+
+    def handle_sc_app_delete(self) -> None:
+        """Удалить credentials приложения и кэш его токена."""
+        global SC_APP_ID, SC_APP_SECRET
+        SC_APP_ID, SC_APP_SECRET = "", ""
+        SC_APP_TOKEN_MEM.clear()
+        try:
+            if SC_APP_FILE.is_file():
+                SC_APP_FILE.unlink()
+        except OSError:
+            pass
+        try:
+            cache = SC_CACHE_DIR / "sc_app_token.json"
+            if cache.is_file():
+                cache.unlink()
+        except OSError:
+            pass
+        self.send_json({"ok": True})
 
     def handle_sc_resolve(self, query: dict[str, list[str]]) -> None:
         url = query.get("url", [""])[0].strip()
@@ -1872,126 +2462,6 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": True})
         except OSError as e:
             self.send_json({"error": f"Не удалось удалить: {e}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
-
-    def handle_zvuk_search(self, query: dict[str, list[str]]) -> None:
-        text = query.get("q", [""])[0].lstrip("\ufeff").strip()
-        if not text:
-            self.send_json({"error": "Пустой поисковый запрос"}, HTTPStatus.BAD_REQUEST)
-            return
-        try:
-            count = min(max(int(query.get("count", ["18"])[0]), 1), 30)
-        except ValueError:
-            count = 18
-        cache_key = f"{text.lower()}|{count}"
-        now = time.time()
-        cached = ZVUK_SEARCH_CACHE.get(cache_key)
-        if cached and (now - cached[1]) < ZVUK_SEARCH_TTL:
-            self.send_json({"tracks": cached[0]})
-            return
-        client = _get_zvuk_client()
-        if client is None:
-            self.send_json({"error": "Zvuk не доступен: pip install zvuk-music и токен (ZVUK_TOKEN или анонимный)"}, HTTPStatus.SERVICE_UNAVAILABLE)
-            return
-        try:
-            result = client.search(text, limit=count)
-            items = []
-            if result and result.tracks and result.tracks.items:
-                items = result.tracks.items
-            if not items:
-                qs = client.quick_search(text, limit=count)
-                if qs and qs.tracks:
-                    items = qs.tracks
-            tracks = []
-            for t in items[:count]:
-                try:
-                    tid = str(getattr(t, "id", ""))
-                    if not tid:
-                        continue
-                    title = getattr(t, "title", "") or ""
-                    artist = ""
-                    try:
-                        artist = t.get_artists_str() if hasattr(t, "get_artists_str") else ", ".join(a.title for a in getattr(t, "artists", []))
-                    except Exception:
-                        artist = ""
-                    duration = int(getattr(t, "duration", 0) or 0)
-                    cover = ""
-                    try:
-                        cover = t.get_cover_url(400) if hasattr(t, "get_cover_url") else ""
-                    except Exception:
-                        cover = ""
-                    if not cover:
-                        try:
-                            rel = getattr(t, "release", None)
-                            if rel and getattr(rel, "image", None):
-                                cover = rel.image.get_url(400, 400)
-                        except Exception:
-                            cover = ""
-                    tracks.append({"id": tid, "title": title, "artist": artist, "thumbnail": cover, "duration": duration, "source": "zvuk"})
-                except Exception:
-                    continue
-            ZVUK_SEARCH_CACHE[cache_key] = (tracks, now)
-            _trim_cache(ZVUK_SEARCH_CACHE, 1)
-            self.send_json({"tracks": tracks})
-        except Exception as error:
-            log.exception("Zvuk search failed for %r", text)
-            self.send_json({"error": f"Ошибка поиска Zvuk: {error}"}, HTTPStatus.BAD_GATEWAY)
-
-    def handle_zvuk_resolve(self, query: dict[str, list[str]]) -> None:
-        track_id = query.get("trackId", [""])[0].strip() or query.get("id", [""])[0].strip()
-        if not track_id:
-            self.send_json({"error": "trackId обязателен"}, HTTPStatus.BAD_REQUEST)
-            return
-        try:
-            url = _zvuk_get_stream_url(track_id)
-            self.send_json({"url": url, "trackId": track_id})
-        except Exception as error:
-            log.warning("Zvuk resolve failed for %s: %s", track_id, error)
-            self.send_json({"error": f"Ошибка Zvuk resolve: {error}"}, HTTPStatus.BAD_GATEWAY)
-
-    def handle_zvuk_stream(self, query: dict[str, list[str]]) -> None:
-        track_id = query.get("trackId", [""])[0].strip() or query.get("id", [""])[0].strip()
-        if not track_id:
-            self.send_response(HTTPStatus.BAD_REQUEST)
-            self.end_headers()
-            return
-        try:
-            audio_url = _zvuk_get_stream_url(track_id)
-        except Exception as error:
-            log.warning("Zvuk stream url failed for %s: %s", track_id, error)
-            self.send_response(HTTPStatus.BAD_GATEWAY)
-            self.end_headers()
-            return
-        try:
-            range_header = self.headers.get("Range")
-            upstream_headers = {"User-Agent": DEFAULT_UA, "Accept": "*/*"}
-            if range_header:
-                upstream_headers["Range"] = range_header
-            req = urllib.request.Request(audio_url, headers=upstream_headers)
-            with urllib.request.urlopen(req, timeout=15) as upstream:
-                status = HTTPStatus(upstream.status if upstream.status in (200, 206) else 200)
-                self.send_response(status)
-                ctype = upstream.headers.get_content_type() or "audio/mpeg"
-                self.send_header("Content-Type", ctype)
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Cache-Control", "no-store")
-                for h in ("Content-Length", "Content-Range", "Accept-Ranges"):
-                    if h in upstream.headers:
-                        self.send_header(h, upstream.headers[h])
-                if "Accept-Ranges" not in upstream.headers:
-                    self.send_header("Accept-Ranges", "bytes")
-                self.end_headers()
-                while True:
-                    chunk = upstream.read(STREAM_CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-        except Exception as error:
-            log.warning("Zvuk proxy stream error for %s: %s", track_id, error)
-            try:
-                self.send_response(HTTPStatus.BAD_GATEWAY)
-                self.end_headers()
-            except Exception:
-                pass
 
     def _serve_file_stream(self, file_path: str, content_type: str) -> None:
         file_size = os.path.getsize(file_path)

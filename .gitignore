@@ -40,11 +40,16 @@ desktop.ini
 tg_token.txt
 SOVAKOD/tg_token.txt
 **/tg_token.txt
-zvuk_token.txt
-SOVAKOD/zvuk_token.txt
-**/zvuk_token.txt
 cookies.txt
 SOVAKOD/cookies.txt
 
 # Test/runtime leftovers
 SOVAKOD/probe_*.py
+
+sc_token.txt
+SOVAKOD/sc_token.txt
+**/sc_token.txt
+
+sc_app.txt
+SOVAKOD/sc_app.txt
+**/sc_app.txt

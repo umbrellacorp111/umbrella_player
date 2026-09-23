@@ -67,6 +67,7 @@ const state = {
   activePlaylistId: null,
   scDownloaded: {},
   scLibTracks: [],
+  profile: null,
 };
 
 function scKey(track) {
@@ -430,6 +431,17 @@ document.addEventListener('visibilitychange', () => {
 
 const FAV_KEY = 'umbrella_favorites';
 let favorites = loadJSON(FAV_KEY, []);
+// Миграция: у SC-записей иногда записан чужой dbId (числовой id поиска
+// вместо ключа IndexedDB) — из-за него резолв шёл в IDB и падал
+// с «Файл не найден в хранилище». Чистим один раз при загрузке.
+favorites = favorites.map((f) => {
+  if (!f || typeof f !== 'object') return f;
+  if (f.source === 'soundcloud' && f.dbId != null && typeof f.dbId !== 'number') {
+    const { dbId, ...rest } = f;
+    return rest;
+  }
+  return f;
+});
 
 function favKey(track) {
   if (track.zvukId) return `zvuk:${track.zvukId}`;
@@ -452,16 +464,23 @@ function toggleFav(track) {
     favorites.splice(idx, 1);
     toast('Удалено из избранного', 'info', 2200);
   } else {
+    // dbId — только для локальных файлов из IndexedDB. У SC-треков туда
+    // попадал числовой id поиска, и резолв падал «Файл не найден в хранилище».
+    const src = track.source || 'local';
+    const isRemote = src === 'soundcloud';
     favorites.unshift({
       key,
       title: track.title || 'Без названия',
       artist: track.artist || 'Неизвестный исполнитель',
       album: track.album || '',
-      source: track.source || 'local',
+      source: src,
       videoId: track.videoId || null,
-      zvukId: track.zvukId || track.id || null,
+      zvukId: track.zvukId || (!isRemote ? track.id : null) || null,
       scId: track.scId || null,
-      dbId: track.dbId || track.id || null,
+      scUrl: track.scUrl || null,
+      url: track.url || null,
+      path: track.path || null,
+      dbId: !isRemote ? (track.dbId || track.id || null) : null,
       thumbnail: track.thumbnail || track.cover || '',
       duration: track.duration || 0,
       color: track.color || '',
@@ -471,15 +490,25 @@ function toggleFav(track) {
   }
   saveFavorites();
   refreshFavUI();
+  if (added) ensureFavDownload(track);
   return added;
 }
 
 function favRecordToTrack(f) {
-  return {
+  const t = {
     title: f.title, artist: f.artist, album: f.album,
-    source: f.source, videoId: f.videoId, zvukId: f.zvukId, scId: f.scId, dbId: f.dbId,
+    source: f.source, videoId: f.videoId, zvukId: f.zvukId, scId: f.scId,
+    scUrl: f.scUrl || null, url: f.url || null, path: f.path || null,
+    dbId: f.source === 'soundcloud' ? null : (f.dbId || null),
     thumbnail: f.thumbnail, duration: f.duration, color: f.color || coverGradient(0),
   };
+  // Записи без пригодной для стрима ссылки (старые сейвы, scId без URL):
+  // ищем трек заново по названию. Работает и для scId-only записей —
+  // по одному scId поток не построить, нужен permalink из поиска.
+  if (t.source === 'soundcloud' && !t.path && !(t.scUrl || t.url) && !t._needsLookup) {
+    t._needsLookup = `${t.title || ''} ${t.artist || ''}`.trim() || null;
+  }
+  return t;
 }
 
 function refreshFavUI() {
@@ -1656,7 +1685,7 @@ function trackRow(track, index, mode) {
   const favBtn = `<button class="track-fav ${isFavTrack(track) ? 'active' : ''}" data-fav="${escapeHtml(favKey(track))}" aria-label="В избранное" title="В избранное">${icons.heart}</button>`;
   const plBtn = `<button class="track-pl" data-pl aria-label="В плейлист" title="В плейлист"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg><span>В плейлист</span></button>`;
   const dlBtn = isSc ? `<button class="track-dl" data-dl="${escapeHtml(track.scId || track.url || '')}" aria-label="Скачать" title="Скачать в библиотеку">${icons.download}<span>Скачать в библиотеку</span></button>` : '';
-  const delBtn = (mode === 'library') ? `<button class="track-del" data-del="${track.id}" aria-label="Удалить" title="Удалить из библиотеки">${icons.trash}<span>Удалить из библиотеки</span></button>` : '';
+  const delBtn = (mode === 'library' && track.id) ? `<button class="track-del" data-del="${track.id}" aria-label="Удалить" title="Удалить из библиотеки">${icons.trash}<span>Удалить из библиотеки</span></button>` : '';
   const menu = `<span class="track-more-wrap"><button class="track-more" aria-label="Ещё" title="Ещё">${icons.more}</button><span class="track-menu" hidden>${plBtn}${dlBtn}${delBtn}</span></span>`;
   const album = isSc ? 'SoundCloud' : escapeHtml(track.album || '');
   const actionLabel = 'Играть';
@@ -1725,7 +1754,7 @@ async function resolveTrack(track) {
     track._blobUrl = URL.createObjectURL(blob);
     return track._blobUrl;
   }
-  if ((!track.scUrl && !track.scId) && track._needsLookup) {
+  if ((!track.scUrl && !track.url && !track.path) && track._needsLookup) {
     const data = await request(`/sc/search?q=${encodeURIComponent(track._needsLookup)}&count=1`, { timeout: API_TIMEOUT.default });
     const found = (data.tracks || [])[0];
     if (!found) throw new Error('Трек не найден в SoundCloud');
@@ -1737,12 +1766,23 @@ async function resolveTrack(track) {
     track._needsLookup = null;
   }
   if (track.source === 'zvuk') {
-    const zid = track.zvukId || track.id;
-    if (!zid) throw new Error('Нет ID трека Zvuk');
-    return `${API}/zvuk/stream?trackId=${encodeURIComponent(zid)}`;
+    throw new Error('Zvuk удалён из плеера — остались SoundCloud и локальные файлы');
   }
   if (track.source === 'soundcloud') {
     if (track.path) return `${API}/sc/file?path=${encodeURIComponent(track.path)}`;
+    // Скачанный файл всегда предпочтительнее стрима: ищем по URL-карте,
+    // затем по совпадению названия + исполнителя.
+    const key = (typeof scKey === 'function' && scKey(track)) || track.scUrl || track.url || '';
+    const mapped = key && typeof scUrlMap !== 'undefined' ? scUrlMap[key] : null;
+    if (mapped) { track.path = mapped; return `${API}/sc/file?path=${encodeURIComponent(mapped)}`; }
+    const ti = (track.title || '').trim().toLowerCase();
+    if (ti && Array.isArray(state.scLibTracks)) {
+      const ar = (track.artist || '').trim().toLowerCase();
+      const local = state.scLibTracks.find((f) =>
+        (f.title || '').trim().toLowerCase() === ti &&
+        (f.artist || '').trim().toLowerCase() === ar && f.path);
+      if (local) { track.path = local.path; return `${API}/sc/file?path=${encodeURIComponent(local.path)}`; }
+    }
     const scUrl = track.scUrl || track.url;
     if (!scUrl) throw new Error('Нет ссылки на трек SoundCloud');
     return `${API}/sc/stream?url=${encodeURIComponent(scUrl)}`;
@@ -2125,6 +2165,7 @@ const ps5Engine = (() => {
   let parts = [], extras = [];
   const mouse = { x: null, y: null, px: null, py: null, radius: 160, speed: 0 };
   let ox = 0, oy = 0, gx = 0, gy = 0;
+<<<<<<< Updated upstream
 
   function resize() {
     if (!canvas) return;
@@ -2275,6 +2316,175 @@ const ps5Engine = (() => {
     raf = requestAnimationFrame(loop);
   }
 
+=======
+  let frameHue = 262;
+  // Оттенок акцента для частиц: читаем раз за кадр, а не на каждую частицу.
+  function sampleAccentHue() {
+    try {
+      const el = document.documentElement;
+      const inline = parseFloat(el.style.getPropertyValue('--dyn-h'));
+      if (isFinite(inline)) { frameHue = inline; return; }
+      const v = parseFloat(getComputedStyle(el).getPropertyValue('--dyn-h'));
+      if (isFinite(v)) frameHue = v;
+    } catch (e) {}
+  }
+
+  function resize() {
+    if (!canvas) return;
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function measure() {
+    if (!canvas) return;
+    const cr = canvas.getBoundingClientRect();
+    // Скрытые элементы (плеер закрыт на сплэше/входе) дают нулевой rect —
+    // их игнорируем, иначе всё липнет к левому верхнему углу.
+    const live = (r) => r && r.width > 10 && r.height > 10;
+    const art = $('#npArtWrap') || $('.np-art-wrap');
+    const ar = art ? art.getBoundingClientRect() : null;
+    ox = live(ar) ? ar.left + ar.width / 2 - cr.left : cr.width / 2;
+    oy = live(ar) ? ar.top + ar.height / 2 - cr.top : cr.height / 2;
+    const btn = $('#npPlay');
+    const br = btn ? btn.getBoundingClientRect() : null;
+    gx = live(br) ? br.left + br.width / 2 - cr.left : cr.width / 2;
+    gy = live(br) ? br.top + br.height / 2 - cr.top : cr.height / 2;
+  }
+
+  class P {
+    constructor(boot) {
+      this.extra = false;
+      this.dead = false;
+      this.home = false;
+      this.homing = false;
+      this.bokeh = Math.random() > 0.65;
+      this.size = this.bokeh ? Math.random() * 75 + 35 : Math.random() * 4.5 + 1.2;
+      this.maxAlpha = this.bokeh ? Math.random() * 0.12 + 0.03 : Math.random() * 0.5 + 0.15;
+      this.alpha = 0;
+      this.blur = this.bokeh ? 12 : 0;
+      this.wobbleSpeed = Math.random() * 0.02 + 0.005;
+      this.wobbleWeight = Math.random() * 1.5 + 0.5;
+      this.wobbleTime = Math.random() * 100;
+      if (boot) {
+        const r = Math.random() * 120;
+        const a = Math.random() * Math.PI * 2;
+        this.x = ox + Math.cos(a) * r;
+        this.y = oy + Math.sin(a) * r;
+        const sa = Math.random() * Math.PI * 2;
+        const ss = Math.random() * 11 + 4;
+        this.vx = Math.cos(sa) * ss;
+        this.vy = Math.sin(sa) * ss;
+      } else {
+        this.x = Math.random() * W;
+        this.y = H + this.size + Math.random() * 100;
+        this.vx = (Math.random() - 0.5) * 0.8;
+        this.vy = -(Math.random() * 1.2 + 0.6);
+      }
+    }
+    reset() {
+      this.bokeh = Math.random() > 0.65;
+      this.size = this.bokeh ? Math.random() * 75 + 35 : Math.random() * 4.5 + 1.2;
+      this.x = Math.random() * W;
+      this.y = H + this.size + Math.random() * 100;
+      this.vx = (Math.random() - 0.5) * 0.8;
+      this.vy = -(Math.random() * 1.2 + 0.6);
+      this.alpha = 0;
+      this.maxAlpha = this.bokeh ? Math.random() * 0.14 + 0.04 : Math.random() * 0.5 + 0.2;
+      this.blur = this.bokeh ? 12 : 0;
+      this.homing = false;
+      this.home = false;
+    }
+    update() {
+      if (this.alpha < this.maxAlpha) this.alpha += 0.015;
+      this.wobbleTime += this.wobbleSpeed;
+      this.vx += Math.sin(this.wobbleTime) * this.wobbleWeight * 0.03;
+      if (!gathering && mouse.x !== null && mouse.y !== null) {
+        const dx = this.x - mouse.x;
+        const dy = this.y - mouse.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < mouse.radius && d > 0.001) {
+          const f = ((mouse.radius - d) / mouse.radius) * (1 + mouse.speed * 0.2);
+          const push = f * (this.bokeh ? 0.6 : 3.8);
+          this.vx += (dx / d) * push * 0.15 + (dy / d) * push * 0.03;
+          this.vy += (dy / d) * push * 0.15 - (dx / d) * push * 0.03;
+        }
+      }
+      if (gathering) {
+        const dx = gx - this.x;
+        const dy = gy - this.y;
+        this.vx += dx * 0.02;
+        this.vy += dy * 0.02;
+        this.vx *= 0.86;
+        this.vy *= 0.86;
+        this.x += this.vx;
+        this.y += this.vy;
+        if (!this.home && Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+          this.home = true;
+          this.alpha *= 0.9;
+        }
+        if (this.home) this.alpha *= 0.96;
+        return true;
+      }
+      this.vx *= 0.94;
+      const tvy = -(this.bokeh ? 0.4 : 0.9);
+      this.vy = this.vy * 0.94 + tvy * 0.06;
+      this.x += this.vx;
+      this.y += this.vy;
+      if (!this.bokeh) {
+        const tw = Math.sin(this.wobbleTime * 2.5) * 0.15;
+        this.alpha = Math.max(0.1, Math.min(this.maxAlpha + tw, 1));
+      }
+      if (this.y < -this.size - 20 || this.x < -this.size - 20 || this.x > W + this.size + 20) {
+        if (this.extra) return false;
+        this.reset();
+      }
+      return true;
+    }
+    draw() {
+      ctx.save();
+      const sm = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+      if (sm > 2 && !this.bokeh) {
+        ctx.translate(this.x, this.y);
+        ctx.rotate(Math.atan2(this.vy, this.vx));
+        ctx.scale(1 + sm * 0.12, 1);
+        ctx.beginPath();
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, this.size);
+        g.addColorStop(0, `hsla(${frameHue}, 88%, 72%, ${this.alpha})`);
+        g.addColorStop(1, `hsla(${frameHue + 16}, 85%, 60%, 0)`);
+        ctx.fillStyle = g;
+        ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        if (this.bokeh) {
+          ctx.shadowBlur = this.blur;
+          ctx.shadowColor = `hsla(${frameHue + 12}, 88%, 68%, ${this.alpha * 0.6})`;
+        }
+        const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.size);
+        g.addColorStop(0, `hsla(${frameHue}, 88%, 72%, ${this.alpha})`);
+        g.addColorStop(0.4, `hsla(${frameHue + 16}, 85%, 62%, ${this.alpha * 0.3})`);
+        g.addColorStop(1, `hsla(${frameHue + 16}, 85%, 60%, 0)`);
+        ctx.fillStyle = g;
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  function loop() {
+    // Канвас могли создать до раскладки (нулевой размер) — перемеряем.
+    if (!W || !H) { resize(); measure(); }
+    ctx.clearRect(0, 0, W, H);
+    sampleAccentHue();
+    parts = parts.filter(p => { const a = p.update(); if (a) p.draw(); return a; });
+    extras = extras.filter(p => { const a = p.update(); if (a) p.draw(); return a; });
+    raf = requestAnimationFrame(loop);
+  }
+
+>>>>>>> Stashed changes
   function onMove(e) {
     if (mouse.x !== null && mouse.px !== null) {
       mouse.speed = Math.min(Math.hypot(e.clientX - mouse.px, e.clientY - mouse.py), 50);
@@ -2307,7 +2517,10 @@ const ps5Engine = (() => {
       if (!booted) {
         canvas = document.createElement('canvas');
         canvas.className = 'ps5-canvas';
+<<<<<<< Updated upstream
         container.appendChild(canvas);
+=======
+>>>>>>> Stashed changes
         ctx = canvas.getContext('2d');
         window.addEventListener('resize', resize);
         window.addEventListener('mousemove', onMove);
@@ -2315,6 +2528,12 @@ const ps5Engine = (() => {
         window.addEventListener('mousedown', onDown);
         booted = true;
       }
+<<<<<<< Updated upstream
+=======
+      // Канвас один на движок и переезжает за контейнером (сплэш → вход → плеер),
+      // иначе после первого экрана он остаётся в скрытом контейнере с нулевым размером.
+      if (container && canvas.parentElement !== container) container.appendChild(canvas);
+>>>>>>> Stashed changes
       cancelAnimationFrame(raf);
       gathering = false;
       extras = [];
@@ -2938,10 +3157,6 @@ async function searchSC(query, count = 20) {
   const res = await request(`/sc/search?q=${encodeURIComponent(query)}&count=${count}`, { timeout: API_TIMEOUT.search });
   return res.tracks || [];
 }
-async function searchZvuk(query, count = 18) {
-  const res = await request(`/zvuk/search?q=${encodeURIComponent(query)}&count=${count}`, { timeout: API_TIMEOUT.search });
-  return (res.tracks || []).map((t) => ({ ...t, source: 'zvuk', zvukId: t.id, thumbnail: t.thumbnail || '', duration: t.duration || 0 }));
-}
 async function fetchRelatedTracksSC(artist, title) {
   try {
     const q = [artist, title].filter(Boolean).join(' ');
@@ -3173,13 +3388,21 @@ function searchStale(gen, source) {
   return gen !== state.searchGen || (source && state.searchSource !== source);
 }
 
+function showScAuthBanner() {
+  const banner = $('#scAuthBanner');
+  if (banner) banner.hidden = false;
+}
+function hideScAuthBanner() {
+  const banner = $('#scAuthBanner');
+  if (banner) banner.hidden = true;
+}
+
 async function performSearch(query) {
   const gen = ++state.searchGen;
   const source = state.searchSource;
   const isAlbums = source === 'albums';
   const isPlaylists = source === 'playlists';
   const isSc = source === 'soundcloud';
-  const isZvuk = source === 'zvuk';
   $('#searchResults').hidden = isAlbums || isPlaylists;
   $('#albumResults').hidden = !isAlbums;
   $('#albumDetail').hidden = true;
@@ -3191,24 +3414,14 @@ async function performSearch(query) {
       await searchAlbumsUnified(query, gen);
     } else if (isPlaylists) {
       await searchPlaylistsUnified(query, gen);
-    } else if (isZvuk) {
-      const data = await request(`/zvuk/search?q=${encodeURIComponent(query)}&count=18`, { timeout: API_TIMEOUT.search });
-      if (searchStale(gen, source)) return;
-      const tracks = (data.tracks || []).map((t) => ({ ...t, source: 'zvuk', zvukId: t.id }));
-      state.searchResults = tracks;
-      $('#searchEmpty').hidden = tracks.length > 0;
-      $('#searchResults').innerHTML = tracks.length
-        ? `<div class="track-list">${tracks.map((t, i) => trackRow(t, i, 'search')).join('')}</div>`
-        : '<div class="empty-search"><h2>Ничего не найдено</h2><p>Попробуйте изменить запрос.</p></div>';
-      if (window.gsap && tracks.length && !reduceMotion()) {
-        gsap.fromTo('#searchResults .track-row', { opacity: 0, y: 14, scale: 0.98 }, { opacity: 1, y: 0, scale: 1, duration: 0.3, ease: 'power2.out', stagger: 0.03, clearProps: 'transform' });
-      }
     } else if (isSc) {
       const data = await request(`/sc/search?q=${encodeURIComponent(query)}&count=18`, { timeout: API_TIMEOUT.search });
       if (searchStale(gen, source)) return;
       const tracks = (data.tracks || []).map((t) => ({ ...t, source: 'soundcloud', scId: t.id, scUrl: t.url }));
       state.searchResults = tracks;
       $('#searchEmpty').hidden = tracks.length > 0;
+      if (tracks.length) hideScAuthBanner();
+      refreshScAuthStatus();
       $('#searchResults').innerHTML = tracks.length
         ? `<div class="track-list">${tracks.map((t, i) => trackRow(t, i, 'search')).join('')}</div>`
         : '<div class="empty-search"><h2>Ничего не найдено</h2><p>Попробуйте изменить запрос.</p></div>';
@@ -3232,6 +3445,11 @@ async function performSearch(query) {
     if (searchStale(gen, source)) return;
     toast(error.message, 'error');
     $('#searchEmpty').hidden = false;
+    // Анонимный SC мёртв и авторизации нет — показываем вход прямо в поиске.
+    const authFailed = /401|Unauthorized|закрыл анонимный/i.test(error.message || '');
+    const level = error.details && error.details.scAuthLevel;
+    if (isSc && authFailed && level !== 'oauth' && level !== 'app') showScAuthBanner();
+    if (isSc) refreshScAuthStatus();
   } finally {
     if (gen === state.searchGen) {
       const btn = $('#searchButton');
@@ -3438,6 +3656,31 @@ async function importSoundcloudSet(url) {
   }
 }
 
+/** Скачанные SoundCloud-файлы показываем и в общей Библиотеке (комментарий
+    у renderTracks: «все треки, локальные и из SoundCloud»). Сервер — источник
+    правды, поэтому мержим при каждом обновлении списка скачанного. */
+function mergeScIntoLibrary() {
+  if (!Array.isArray(state.scLibTracks) || !Array.isArray(state.tracks)) return false;
+  let changed = false;
+  for (const f of state.scLibTracks) {
+    if (!f || !f.path) continue;
+    const dup = state.tracks.some((t) =>
+      (t.path && t.path === f.path) ||
+      (t.source === 'soundcloud' &&
+        (t.title || '').trim().toLowerCase() === (f.title || '').trim().toLowerCase() &&
+        (t.artist || '').trim().toLowerCase() === (f.artist || '').trim().toLowerCase()));
+    if (dup) continue;
+    state.tracks.push({
+      title: f.title || f.name, artist: f.artist || '', album: '',
+      source: 'soundcloud', path: f.path, scUrl: f.scUrl || null,
+      thumbnail: f.thumbnail || '', duration: f.duration || 0,
+      color: coverGradient(state.tracks.length % 6),
+    });
+    changed = true;
+  }
+  return changed;
+}
+
 async function refreshScDownloaded() {
   try {
     const data = await request('/sc/library', { timeout: API_TIMEOUT.library });
@@ -3455,6 +3698,7 @@ async function refreshScDownloaded() {
       duration: 0,
     }));
     renderScLibrary();
+    if (mergeScIntoLibrary() && state.launched && !$('#dashboard').hidden) renderTracks(false);
   } catch (e) { /* keep old cache */ }
 }
 
@@ -3503,6 +3747,10 @@ async function waitSoundcloudJob(jobId, track) {
             const [title = path, artist = ''] = path.split(' - ', 2);
             state.scLibTracks.push({ title, artist, name: path, path, size: 0, ext: 'mp3', source: 'soundcloud', duration: 0 });
             renderScLibrary();
+            // Сразу в общую Библиотеку + привязываем файл к треку-источнику,
+            // чтобы следующее включение шло с локального файла.
+            if (track && !track.path) track.path = path;
+            if (mergeScIntoLibrary() && state.launched && !$('#dashboard').hidden) renderTracks(false);
             resolve({ path });
           } else resolve(null);
           return;
@@ -3523,8 +3771,8 @@ async function waitSoundcloudJob(jobId, track) {
 async function downloadSoundcloudTrack(track) {
   // scId is only a numeric identity; yt-dlp needs the canonical page URL.
   const key = scKey(track);
-  if (!key) return toast('Нет ссылки на SoundCloud', 'error');
-  if (isScDownloaded(track)) return toast('Уже скачано', 'info', 2200);
+  if (!key) { toast('Нет ссылки на SoundCloud', 'error'); return null; }
+  if (isScDownloaded(track)) { toast('Уже скачано', 'info', 2200); return null; }
   try {
     const res = await request('/sc/download', {
       method: 'POST',
@@ -3535,10 +3783,46 @@ async function downloadSoundcloudTrack(track) {
     const result = await waitSoundcloudJob(res.id, track);
     if (result && result.path) {
       toast('Скачано', 'success', 2200);
+      return result;
     }
   } catch (e) {
     toast(e.message, 'error');
   }
+  return null;
+}
+
+/* Избранное хранится файлами, как библиотека: при добавлении SC-трека
+   без локального файла качаем в фоне и привязываем path к записи —
+   дальше трек играет с диска и не зависит от поиска/стрима. */
+const favDlInflight = new Set();
+async function ensureFavDownload(track) {
+  try {
+    if (!track || track.source !== 'soundcloud' || track.path) return;
+    const key = favKey(track);
+    const ti = (track.title || '').trim().toLowerCase();
+    const ar = (track.artist || '').trim().toLowerCase();
+    const local = ti && Array.isArray(state.scLibTracks)
+      ? state.scLibTracks.find((f) => (f.title || '').trim().toLowerCase() === ti
+        && (f.artist || '').trim().toLowerCase() === ar && f.path) : null;
+    if (local) {
+      track.path = local.path;
+      const rec = favorites.find((f) => f.key === key);
+      if (rec && !rec.path) { rec.path = local.path; saveFavorites(); }
+      return;
+    }
+    if (favDlInflight.has(key)) return;
+    favDlInflight.add(key);
+    try {
+      const res = await downloadSoundcloudTrack(track);
+      if (res && res.path) {
+        track.path = res.path;
+        const rec = favorites.find((f) => f.key === key);
+        if (rec) { rec.path = res.path; saveFavorites(); refreshFavUI(); }
+      }
+    } finally {
+      favDlInflight.delete(key);
+    }
+  } catch (e) { /* фоновая докачка не должна мешать воспроизведению */ }
 }
 
 async function openScUrl() {
@@ -4472,6 +4756,7 @@ document.addEventListener('click', async (e) => {
 
   if (row.dataset.source === 'favorites') {
     state.visibleTracks = favorites.map(favRecordToTrack);
+    ensureFavDownload(track);
     playTrack(track, index);
   } else if (row.dataset.source === 'search') {
     state.visibleTracks = state.searchResults;
@@ -4486,7 +4771,239 @@ document.addEventListener('click', async (e) => {
    Launch
    ============================================================ */
 
-async function launchLocalPlayer() {
+/* ============================================================
+   Profiles — экран входа как в PS5: Гость + аккаунты SoundCloud.
+   Порядок: сплэш-заставка → окно входа → приложение.
+   ============================================================ */
+
+const PROFILE_KEY = 'umbrella_profile';
+let accountLoginPending = false;
+let accountSelectBusy = false;
+let accountCache = null;
+
+function guestTileState(data) {
+  if (!data) return 'unknown';
+  if (data.guestAlive === true) return 'on';
+  if (data.guestAlive === false) return 'off';
+  return (data.scAuthLevel && data.scAuthLevel !== 'none') ? 'on' : 'unknown';
+}
+
+function accountTileHTML(t, i) {
+  const dotWord = (d) => (d === 'on' ? '' : d);
+  if (t.add) {
+    return `<button class="account-tile" data-profile="__add" role="option" aria-selected="false" style="animation-delay:${150 + i * 70}ms">`
+    + `<span class="account-ava add-ava"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg></span>`
+    + `<span class="account-nick">Войти</span><span class="account-sub">SoundCloud</span></button>`;
+  }
+  const ava = t.avatar
+    ? `<img src="${escapeHtml(t.avatar)}" alt="" />`
+    : (t.id === 'guest'
+      ? '<svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.4 14.2A8.5 8.5 0 0 1 9.8 3.6a8.5 8.5 0 1 0 10.6 10.6z"/></svg>'
+      : `<span class="ava-letter">${escapeHtml((t.nick || '?').slice(0, 1).toUpperCase())}</span>`);
+  return `<button class="account-tile" data-profile="${escapeHtml(t.id)}" role="option" aria-selected="false" style="animation-delay:${150 + i * 70}ms">`
+    + (t.removable ? `<span class="account-del" data-del-account="${escapeHtml(t.id)}" title="Отвязать" aria-label="Отвязать">×</span>` : '')
+    + `<span class="account-ava${t.id === 'guest' ? ' guest-ava' : ''}">${ava}</span>`
+    + `<span class="account-nick">${escapeHtml(t.nick)}</span>`
+    + `<span class="account-sub">${escapeHtml(t.sub)}</span>`
+    + `<span class="account-dot ${dotWord(t.dot)}" title="${escapeHtml(t.dotTitle)}"></span>`
+    + `</button>`;
+}
+
+function wireAccountRow() {
+  const row = $('#accountRow');
+  if (!row || row.dataset.wired) return;
+  row.dataset.wired = '1';
+  row.addEventListener('click', (e) => {
+    const tile = e.target.closest('.account-tile');
+    if (!tile) return;
+    const del = e.target.closest('[data-del-account]');
+    if (del) { e.stopPropagation(); removeAccount(del.dataset.delAccount); return; }
+    onAccountTile(tile.dataset.profile);
+  });
+  row.onkeydown = (e) => {
+    const items = [...row.querySelectorAll('.account-tile')];
+    const idx = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      if (!items.length) return;
+      const next = e.key === 'ArrowRight' ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+      items[next].focus();
+    } else if (e.key === 'Home') { e.preventDefault(); items[0] && items[0].focus(); }
+    else if (e.key === 'End') { e.preventDefault(); items[items.length - 1] && items[items.length - 1].focus(); }
+  };
+}
+
+function paintAccountTiles(tiles, preselectId) {
+  const row = $('#accountRow');
+  if (!row) return;
+  const focused = row.querySelector('.account-tile:focus');
+  const focusId = focused && focused.dataset.profile;
+  row.innerHTML = tiles.map((t, i) => accountTileHTML(t, i)).join('');
+  wireAccountRow();
+  const want = String(focusId || preselectId || 'guest').replace(/[^a-zA-Z0-9_-]/g, '');
+  const target = row.querySelector('[data-profile="' + want + '"]')
+    || row.querySelector('[data-profile="guest"]');
+  if (target && document.activeElement !== target
+      && $('#accountView') && !$('#accountView').hidden) {
+    try { target.focus({ preventScroll: true }); } catch (e) {}
+  }
+}
+
+function guestTile(gState) {
+  return {
+    id: 'guest', nick: 'Гость', sub: 'Встроенный ключ', avatar: '', dot: gState,
+    dotTitle: gState === 'on' ? 'Сервис отвечает' : (gState === 'off' ? 'Сервис недоступен' : 'Статус не проверен'),
+  };
+}
+
+async function renderAccountTiles() {
+  const row = $('#accountRow');
+  if (!row) return;
+  const last = loadJSON(PROFILE_KEY, null);
+  // Гость и вход — сразу, без сервера: выбор есть всегда.
+  paintAccountTiles([guestTile('unknown'), { id: '__add', nick: '', sub: '', add: true }],
+    (last && last.id) || 'guest');
+  // SC-аккаунты и статус гостя подтягиваем фоном с ретраями
+  // (сервер может ещё подниматься, когда сплэш уже прошёл).
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      const data = await request('/sc/accounts', { timeout: 8000 });
+      accountCache = data;
+      const gState = guestTileAlive(data);
+      const tiles = [guestTile(gState)];
+      (data.accounts || []).forEach((a) => tiles.push({
+        id: a.id, nick: a.nick || 'SoundCloud', sub: 'SoundCloud', avatar: a.avatar || '',
+        dot: 'on', dotTitle: 'Ключ привязан', removable: true,
+      }));
+      tiles.push({ id: '__add', nick: '', sub: '', add: true });
+      paintAccountTiles(tiles, (last && last.id) || data.active || 'guest');
+      return;
+    } catch (e) {
+      if (attempt < 5) await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  // Сервер так и не ответил — остаёмся на госте, это офлайн-режим.
+}async function onAccountTile(pid) {
+  if (accountSelectBusy) return;
+  if (pid === '__add') { accountLoginFlow(); return; }
+  accountSelectBusy = true;
+  try {
+    await request('/sc/accounts/active', { method: 'POST', body: JSON.stringify({ id: pid }), timeout: 15000 });
+  } catch (e) {
+    // Сервер недоступен: гость входит офлайн, SC-плитки без сервера и так нет.
+    if (pid !== 'guest') { toast(e.message, 'error'); accountSelectBusy = false; return; }
+  }
+  let prof = { type: 'guest', id: 'guest', nick: 'Гость', avatar: '' };
+  if (pid !== 'guest' && accountCache) {
+    const acc = (accountCache.accounts || []).find((a) => a.id === pid);
+    if (acc) prof = { type: 'sc', id: pid, nick: acc.nick || 'SoundCloud', avatar: acc.avatar || '' };
+  }
+  saveJSON(PROFILE_KEY, { id: pid, nick: prof.nick });
+  try { if (typeof ps5Engine !== 'undefined') ps5Engine.stop(); } catch (e) {}
+  const view = document.getElementById('loginView');
+  if (view) view.classList.add('account-enter');
+  refreshScAuthStatus();
+  setTimeout(() => {
+    accountSelectBusy = false;
+    launchLocalPlayer(prof);
+  }, 380);
+}
+
+async function removeAccount(accId) {
+  const ok = await confirmDialog({
+    title: 'Отвязать аккаунт?',
+    body: 'Токен будет удалён, скачанные треки останутся.',
+    confirmText: 'Отвязать',
+  });
+  if (!ok) return;
+  try {
+    await request(`/sc/accounts?id=${encodeURIComponent(accId)}`, { method: 'DELETE', timeout: 15000 });
+    toast('Аккаунт отвязан', 'info');
+    await renderAccountTiles();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* Автовход: один клик открывает браузер, дальше сами опрашиваем куки,
+   пока человек логинится. Второго клика не нужно (но он работает как
+   принудительная проверка прямо сейчас). */
+let loginPollTimer = 0;
+function stopLoginPolling() {
+  if (loginPollTimer) { clearTimeout(loginPollTimer); loginPollTimer = 0; }
+}
+function pollBrowserImport(onBound) {
+  stopLoginPolling();
+  let tries = 0;
+  const step = async () => {
+    loginPollTimer = 0;
+    if (++tries > 40) { onBound(null); return; }   // ~2 минуты, дальше молча стоим
+    try {
+      const res = await request('/sc/browser-import', { method: 'POST', body: '{}', timeout: 20000 });
+      if (res && res.ok && res.account) { onBound(res.account); return; }
+    } catch (e) { /* сеть/сон — ждём следующую итерацию */ }
+    loginPollTimer = setTimeout(step, 3000);
+  };
+  loginPollTimer = setTimeout(step, 2500);
+}
+
+async function boundAccount(account) {
+  stopLoginPolling();
+  accountLoginPending = false;
+  toast(`Профиль «${account.nick}» привязан — вход сохранён`, 'success');
+  await renderAccountTiles();
+  const hint = $('#accountHint');
+  if (hint) hint.textContent = '← → — выбор · Enter — войти';
+  onAccountTile(account.id);
+}
+
+async function accountLoginFlow() {
+  const hint = $('#accountHint');
+  if (!accountLoginPending) {
+    try {
+      await request('/sc/open-login', { method: 'POST', timeout: 15000 });
+      accountLoginPending = true;
+      if (hint) hint.textContent = 'Войдите в браузере — вход подхватится сам…';
+      toast('Войдите в SoundCloud в браузере', 'info', 3500);
+      pollBrowserImport((account) => { if (account) boundAccount(account); });
+    } catch (e) { toast(e.message, 'error'); }
+    return;
+  }
+  // Повторный клик — проверить прямо сейчас, не дожидаясь опроса.
+  if (hint) hint.textContent = 'Забираем ключи…';
+  try {
+    const res = await request('/sc/browser-import', { method: 'POST', body: '{}', timeout: 60000 });
+    if (res && res.ok && res.account) {
+      boundAccount(res.account);
+    } else {
+      if (hint) hint.textContent = 'Войдите в браузере — вход подхватится сам…';
+      toast((res && res.error) || 'Вход не найден', 'error', 4000);
+    }
+  } catch (e) {
+    if (hint) hint.textContent = 'Войдите в браузере — вход подхватится сам…';
+    toast(e.message, 'error', 4000);
+  }
+}
+
+let accountsEntered = false;
+async function enterAccounts() {
+  if (accountsEntered) return;
+  const view = document.getElementById('loginView');
+  if (!view || view.hidden || state.launched) return;
+  accountsEntered = true;
+  view.classList.add('account-mode');
+  const acc = $('#accountView');
+  if (acc) acc.hidden = false;
+  // renderAccountTiles не бросает: гость рисуется сразу, SC — фоном.
+  try { await renderAccountTiles(); } catch (e) {}
+  // Если сплэш уже ведёт частицы — не перезапускаем, они перетекают
+  // на окно входа как есть. Свой движок — только когда сплэша не было.
+  if (!window.__bootParticles) {
+    try {
+      if (typeof ps5Engine !== 'undefined' && $('#accountParticles')) ps5Engine.start($('#accountParticles'));
+    } catch (e) {}
+  }
+}
+
+async function launchLocalPlayer(profile) {
   const btn = $('#launchLocal');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span>Загрузка…</span>'; }
   // Show the player immediately so the button always works,
@@ -4495,7 +5012,13 @@ async function launchLocalPlayer() {
   state.launched = true;
   if ($('#loginView')) $('#loginView').hidden = true;
   if ($('#dashboard')) $('#dashboard').hidden = false;
-  setUser({ first_name: 'Гость', last_name: '' });
+  // Клик по «Открыть плеер» передаёт сюда Event — это не профиль.
+  const isProf = profile && typeof profile === 'object' && !(profile instanceof Event)
+    && ('type' in profile || 'nick' in profile || 'id' in profile);
+  const prof = isProf ? profile : { type: 'guest', id: 'guest', nick: 'Гость', avatar: '' };
+  state.profile = prof;
+  saveJSON(PROFILE_KEY, { id: prof.type === 'guest' ? 'guest' : prof.id, nick: prof.nick });
+  setUser(prof.nick, prof.avatar, prof.type === 'sc' ? 'SoundCloud' : 'Локальный профиль');
   renderTracks();
   if (window.gsap && !reduceMotion()) {
     // clearProps обязателен: остаточный transform на .dashboard делает его
@@ -4515,14 +5038,20 @@ async function launchLocalPlayer() {
   if (deep) switchView(deep);
 }
 
-function setUser(user) {
-  const name = `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Гость';
-  const avatar = user.photo || avatarData(name);
-  $('#miniName').textContent = name;
-  $('#miniAvatar').src = avatar;
-  $('#settingsAvatar').src = avatar;
-  $('#settingsName').textContent = name;
-  $('#settingsId').textContent = 'Локальный профиль';
+function setUser(name, avatar, sub) {
+  // Совместимость: раньше принимал объект {first_name, last_name, photo}.
+  if (name && typeof name === 'object') {
+    sub = 'Локальный профиль';
+    avatar = name.photo || '';
+    name = `${name.first_name || ''} ${name.last_name || ''}`.trim() || 'Гость';
+  }
+  const label = name || 'Гость';
+  const img = avatar || avatarData(label);
+  $('#miniName').textContent = label;
+  $('#miniAvatar').src = img;
+  $('#settingsAvatar').src = img;
+  $('#settingsName').textContent = label;
+  $('#settingsId').textContent = sub || 'Локальный профиль';
   $('#profileButton').hidden = false;
 }
 
@@ -6639,6 +7168,32 @@ function wireEvents() {
   $('#scUrlGo')?.addEventListener('click', openScUrl);
   $('#scUrlInput')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') openScUrl(); });
   $('#scLibraryBtn')?.addEventListener('click', toggleScLibrary);
+
+  // Контекстный вход: баннер в поиске, когда анонимный доступ мёртв.
+  // Человек логинится в браузере бесплатным аккаунтом, ключи забираем сами.
+  $('#scLoginBtn')?.addEventListener('click', async () => {
+    try {
+      await request('/sc/open-login', { method: 'POST', timeout: 15000 });
+      toast('Войдите в SoundCloud в браузере, затем нажмите «Я вошёл»', 'info', 4000);
+    } catch (e) { toast(e.message, 'error'); }
+  });
+  $('#scLoginDoneBtn')?.addEventListener('click', async () => {
+    const btn = $('#scLoginDoneBtn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span>Забираем ключи…</span>'; }
+    try {
+      const res = await request('/sc/browser-import', { method: 'POST', body: '{}', timeout: 60000 });
+      if (res && res.ok) {
+        toast(`Вход подхвачен${res.browser ? ` из ${res.browser}` : ''} — поиск работает`, 'success');
+        hideScAuthBanner();
+        refreshScAuthStatus();
+        const q = ($('#searchInput')?.value || '').trim();
+        if (q) performSearch(q);
+      } else {
+        toast((res && res.error) || 'Вход не найден', 'error', 4000);
+      }
+    } catch (e) { toast(e.message, 'error', 4000); }
+    if (btn) { btn.disabled = false; btn.innerHTML = '<span>Я вошёл — продолжить</span>'; }
+  });
   $('#scLibrary')?.addEventListener('click', async (e) => {
     if (e.target.closest('#scLibRefresh')) { await refreshScDownloaded(); return; }
     const del = e.target.closest('[data-scdel]');
@@ -7149,6 +7704,37 @@ function wireEvents() {
       document.body.innerHTML = '<div style="display:grid;place-items:center;height:100vh;color:#f5f5f7;font-family:Inter,system-ui,sans-serif;background:#08080c"><div style="text-align:center"><h1 style="font-size:28px;margin-bottom:12px">Сервер остановлен</h1><p style="color:#858890;font-size:14px">Можно закрыть окно</p></div></div>';
     }, 800);
   });
+
+  // Статус доступа SoundCloud (зелёный/красный, без ручного ввода —
+  // вход выполняется автоматически из баннера в Поиске при необходимости).
+  refreshScAuthStatus();
+}
+
+async function refreshScAuthStatus() {
+  const status = $('#scTokenStatus');
+  const dot = $('#scTokenDot');
+  if (!status && !dot) return;
+  try {
+    const info = await request('/version', { timeout: API_TIMEOUT.version });
+    const level = info ? (info.scAuthLevel || (info.scAuth ? 'oauth' : 'none')) : 'none';
+    const alive = info ? info.scAlive : null;
+    // Зелёный, если сервис РЕАЛЬНО отвечает (недавний успех) или есть авторизация.
+    // Красный — только если недавно падал И авторизации нет.
+    const ok = level !== 'none' || alive === true;
+    const texts = {
+      oauth: 'Подключено — поиск, стрим и загрузки работают',
+      app: 'Подключено — поиск, стрим и загрузки работают',
+      none: alive === true
+        ? 'Сервис отвечает — поиск, стрим и загрузки работают'
+        : (alive === false
+          ? 'Нет доступа — откройте Поиск и войдите через браузер'
+          : 'Доступ не проверен — выполните поиск'),
+    };
+    if (status) status.textContent = texts[level] || texts.none;
+    if (dot) dot.classList.toggle('off', !ok);
+  } catch (e) {
+    if (status) status.textContent = 'Сервер недоступен';
+  }
 }
 
 /* ============================================================
@@ -7276,6 +7862,11 @@ function init() {
   try { loadCustomCover(); } catch (e) {}
   try { renderRecent(); } catch (e) {}
   checkForApplicationUpdate();
+  // Окно входа показываем всегда — даже если стартовая заставка выключена
+  // (иначе выбора профиля нет вообще). Со сплэшем тоже безопасно: там флаг.
+  try {
+    if (!state.launched && $('#loginView') && !$('#loginView').hidden) enterAccounts();
+  } catch (e) {}
 }
 
 async function refreshAppVersion() {
@@ -7412,7 +8003,7 @@ setTimeout(bootApp, 300);
   ];
 
   const DEFAULTS = {};
-  GROUPS.forEach(([k]) => { DEFAULTS[k] = k === 'beatSensitivity' ? 2.2 : k !== 'debug'; });
+  GROUPS.forEach(([k]) => { DEFAULTS[k] = k === 'beatSensitivity' ? 1.0 : k !== 'debug'; });
 
   let config;
   try { config = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('umbrella_living') || '{}')); }
@@ -7421,6 +8012,8 @@ setTimeout(bootApp, 300);
   delete config.text;
   delete config.micro;
   delete config.trail;
+  // Старый дефолт чувствительности 2.2 → новый 1.0 (кто не трогал слайдер — получит 1.0).
+  if (config.beatSensitivity === 2.2) config.beatSensitivity = 1.0;
   const saveConfig = () => safe(() => localStorage.setItem('umbrella_living', JSON.stringify(config)));
   saveConfig();
 
@@ -7663,7 +8256,11 @@ setTimeout(bootApp, 300);
     if ((bass > avg * 1.15 && bass > 0.15 && delta > 0.04) || (bass > 0.92 && delta > 0.02)) {
       if (now - lastBeat > 130) {
         lastBeat = now;
+<<<<<<< Updated upstream
         const sensitivity = clamp(Number(config.beatSensitivity) || 2.2, 0.1, 8);
+=======
+        const sensitivity = clamp(Number(config.beatSensitivity) || 1.0, 0.1, 8);
+>>>>>>> Stashed changes
         A.beat = clamp(Math.max(bass * sensitivity, delta * sensitivity * 3), 0.3, 4);
         for (const fn of beatListeners) safe(() => fn(clamp(A.beat, 0, 4)));
       }
@@ -7780,7 +8377,7 @@ setTimeout(bootApp, 300);
         const c = centerOf(o.el);
         o.alpha = lerp(o.alpha, o.on ? 1 : 0, 0.08);
         if (!c || o.alpha < 0.02) { if (!o.on) orbits.splice(i, 1); continue; }
-        const sens = clamp(Number(config.beatSensitivity) || 2.2, 0.1, 8);
+        const sens = clamp(Number(config.beatSensitivity) || 1.0, 0.1, 8);
         const reactiveBass = clamp(A.bass * sens, 0, 3);
         o.a += o.speed * slow * (1 + reactiveBass * 0.8);
         const rad = (Math.max(c.w, c.h) / 2) * o.r + reactiveBass * 10;
@@ -7891,7 +8488,7 @@ setTimeout(bootApp, 300);
     drag.vx *= 0.76; drag.vy *= 0.76;
     drag.sx += drag.vx; drag.sy += drag.vy;
 
-    const sens = clamp(Number(config.beatSensitivity) || 2.2, 0.1, 8);
+    const sens = clamp(Number(config.beatSensitivity) || 1.0, 0.1, 8);
     const reactiveBass = clamp(A.bass * sens, 0, 3);
     const breathe = 1 + Math.sin(performance.now() / 1000 * 0.55) * 0.012 + reactiveBass * 0.05;
     wrap.style.transform =
@@ -8157,7 +8754,7 @@ setTimeout(bootApp, 300);
       '<p class="lv-settings-note">Реакция интерфейса на музыку. Каждый пункт включается отдельно и применяется сразу. ' +
       'При падении FPS слой сам себя ужимает — текущее состояние видно в диагностике.</p>' +
       GROUPS.map(([key, title, desc]) => key === 'beatSensitivity'
-        ? `<div class="lv-sensitivity"><div class="setting-row"><div><b>${title}</b><p>${desc}</p></div><output id="lvBeatOut">${Number(config.beatSensitivity || 2.2).toFixed(1)}×</output></div><div class="lv-range-row"><label for="lvBeatSensitivity">Реакция</label><output id="lvBeatOut2">${Number(config.beatSensitivity || 2.2).toFixed(1)}×</output><input id="lvBeatSensitivity" type="range" min="0.1" max="8" step="0.1" value="${Number(config.beatSensitivity || 2.2)}" /></div></div>`
+        ? `<div class="lv-sensitivity"><div class="setting-row"><div><b>${title}</b><p>${desc}</p></div><output id="lvBeatOut">${Number(config.beatSensitivity || 1.0).toFixed(1)}×</output></div><div class="lv-range-row"><label for="lvBeatSensitivity">Реакция</label><output id="lvBeatOut2">${Number(config.beatSensitivity || 1.0).toFixed(1)}×</output><input id="lvBeatSensitivity" type="range" min="0.1" max="8" step="0.1" value="${Number(config.beatSensitivity || 1.0)}" /></div></div>`
         : `<div class="setting-row">
            <div><b>${title}</b><p>${desc}</p></div>
            <button class="toggle" data-lv="${key}" type="button" role="switch" aria-label="${title}" aria-checked="false"></button>
@@ -8291,7 +8888,7 @@ setTimeout(bootApp, 300);
     safe(() => analyse(now));
     safe(() => setPaused(!isPlaying()));
 
-    const sens = clamp(Number(config.beatSensitivity) || 2.2, 0.1, 8);
+    const sens = clamp(Number(config.beatSensitivity) || 1.0, 0.1, 8);
     const reactiveBass = clamp(A.bass * sens, 0, 3);
     setVar('--lv-bass', reactiveBass.toFixed(2));
     setVar('--lv-beat', clamp(A.beat, 0, 4).toFixed(2));
@@ -8358,10 +8955,12 @@ setTimeout(bootApp, 300);
 
 
 /* ============================================================
-   Umbrella Player — стартовая заставка
-   Встроена в экран запуска (#loginView): сперва свет собирается
-   из пыли, потом проявляется обычный launch-экран с кнопкой.
-   Включается/выключается в Настройках → Живой интерфейс.
+   Umbrella Player — стартовая заставка (PS5 + частицы большого плеера)
+   Встроена в экран запуска (#loginView): чёрный холд → частицы
+   собираются в название UMBRELLA PLAYER → оно светится → холд →
+   название гаснет, частицы рассыпаются по экрану и БЕЗ рестарта
+   остаются плавать на окне входа. Включается/выключается
+   в Настройках → Живой интерфейс.
    ============================================================ */
 
 (() => {
@@ -8378,156 +8977,94 @@ setTimeout(bootApp, 300);
 
   const reduce = (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) || false;
 
+  /* PS5-тайминги: чёрный холд → лого IN → холд → dissolve → единый вход launch. */
+  const T = reduce
+    ? { hold: 250, logoIn: 500, stay: 500, out: 400, enter: 500 }
+    : { hold: 750, logoIn: 1600, stay: 1300, out: 850, enter: 1100 };
+
   const run = () => {
     const view = document.getElementById('loginView');
     if (!view || view.hidden) return;              // плеер уже открыт — заставка не нужна
-    if (view.querySelector('#bootCanvas')) return;
-
-    const canvas = document.createElement('canvas');
-    canvas.id = 'bootCanvas';
-    canvas.setAttribute('aria-hidden', 'true');
-    view.insertBefore(canvas, view.firstChild);
+    if (view.querySelector('.boot-word')) return;
 
     const word = document.createElement('div');
     word.className = 'boot-word';
     word.setAttribute('aria-hidden', 'true');
-    word.innerHTML = '<b>' + [...'UMBRELLA'].map((c, i) =>
-      `<i style="animation-delay:${2600 + i * 55}ms">${c}</i>`).join('') + '</b><small>umbrella player</small>';
+    word.innerHTML =
+      '<span class="boot-mark"><svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.4 14.2A8.5 8.5 0 0 1 9.8 3.6a8.5 8.5 0 1 0 10.6 10.6z"/></svg></span>' +
+      '<b>UMBRELLA</b><b class="boot-player">PLAYER</b>';
     view.appendChild(word);
 
+    // Частицы большого плеера ведут весь сплэш и остаются жить на экране
+    // входа: сбор в название → свечение → разлёт по экрану. Без рестарта.
+    let engineOn = false;
+    if (!reduce) {
+      try {
+        if (typeof ps5Engine !== 'undefined') {
+          ps5Engine.start(view);
+          const pc = view.querySelector('.ps5-canvas');
+          if (pc && pc.parentElement === view) view.insertBefore(pc, view.firstChild);
+          engineOn = true;
+          window.__bootParticles = true;
+        }
+      } catch (e) { engineOn = false; }
+    }
+
+    // Чёрный экран PS5: прячем launch-контент до dissolve.
     view.classList.add('boot-run');
 
-    const ctx = canvas.getContext('2d');
-    let W = 0, H = 0;
-    function resize() {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const r = view.getBoundingClientRect();
-      W = r.width; H = r.height;
-      canvas.width = Math.floor(W * dpr);
-      canvas.height = Math.floor(H * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-    resize();
-    addEventListener('resize', resize, { passive: true });
-
-    const COUNT = reduce ? 60 : Math.min(460, Math.round(W * 0.32) || 260);
-    const parts = [];
-    for (let i = 0; i < COUNT; i++) {
-      const a = Math.random() * Math.PI * 2;
-      parts.push({
-        a,
-        br: Math.pow(Math.random(), 0.6) * Math.max(W, H) * 0.62,
-        size: 0.5 + Math.random() * 1.6,
-        drift: (Math.random() - 0.5) * 0.0016,
-        delay: Math.random() * 0.35,
-        warm: Math.random() < 0.12,
-      });
-    }
-
-    const T = reduce
-      ? { dust: 150, pull: 350, flash: 450, title: 600, out: 1000 }
-      : { dust: 900, pull: 2150, flash: 2380, title: 3550, out: 4300 };
-
-    const start = performance.now();
-    let raf = 0, done = false;
-    const easeIn = (t) => t * t * t;
-    const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+    let done = false;
+    const timers = [];
+    const later = (fn, ms) => { const id = setTimeout(fn, ms); timers.push(id); return id; };
 
     chime();
 
-    function loop(now) {
-      raf = requestAnimationFrame(loop);
-      const t = now - start;
-      const cx = W / 2, cy = H / 2;
-      ctx.clearRect(0, 0, W, H);
-      // Transparent canvas: the launch surface remains the same screen throughout the animation.
-
-      const appear = Math.min(1, t / T.dust);
-      const pull = t < T.dust ? 0 : Math.min(1, (t - T.dust) / (T.pull - T.dust));
-
-      for (const p of parts) {
-        p.a += p.drift * (1 + pull * 22);
-        const k = easeIn(Math.max(0, pull - p.delay) / (1 - p.delay || 1));
-        const r = p.br * (1 - k * 0.995);
-        const alpha = appear * (0.25 + k * 0.75);
-        ctx.beginPath();
-        ctx.arc(cx + Math.cos(p.a) * r, cy + Math.sin(p.a) * r * 0.86, p.size * (1 + k * 0.7), 0, Math.PI * 2);
-        ctx.fillStyle = p.warm ? `rgba(198,214,255,${alpha * 0.9})` : `rgba(255,255,255,${alpha * 0.75})`;
-        ctx.fill();
-      }
-
-      if (pull > 0.15) {
-        const core = easeIn((pull - 0.15) / 0.85);
-        const rad = 4 + core * 90;
-        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
-        g.addColorStop(0, `rgba(255,255,255,${0.85 * core})`);
-        g.addColorStop(0.35, `rgba(190,205,255,${0.35 * core})`);
-        g.addColorStop(1, 'rgba(120,140,255,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
-
-        const lw = core * W * 0.62;
-        const lg = ctx.createLinearGradient(cx - lw / 2, 0, cx + lw / 2, 0);
-        lg.addColorStop(0, 'rgba(255,255,255,0)');
-        lg.addColorStop(0.5, `rgba(255,255,255,${0.75 * core})`);
-        lg.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = lg;
-        ctx.fillRect(cx - lw / 2, cy - 0.9, lw, 1.8);
-      }
-
-      if (t > T.pull) {
-        if (t < T.flash) {
-          ctx.fillStyle = `rgba(255,255,255,${0.9 * (1 - (t - T.pull) / (T.flash - T.pull))})`;
-          ctx.fillRect(0, 0, W, H);
-        }
-        const ringT = Math.min(1, (t - T.pull) / 900);
-        if (ringT < 1) {
-          ctx.beginPath();
-          ctx.arc(cx, cy, easeOut(ringT) * Math.max(W, H) * 0.7, 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(200,215,255,${0.5 * (1 - ringT)})`;
-          ctx.lineWidth = 2 * (1 - ringT) + 0.4;
-          ctx.stroke();
-        }
-        const sT = Math.min(1, (t - T.pull) / 1400);
-        if (sT < 1 && !reduce) {
-          for (let i = 0; i < 26; i++) {
-            const a = (i / 26) * Math.PI * 2 + i * 0.13;
-            const r0 = easeOut(sT) * 260, r1 = r0 + 60 * (1 - sT);
-            ctx.beginPath();
-            ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0 * 0.9);
-            ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1 * 0.9);
-            ctx.strokeStyle = `rgba(255,255,255,${0.35 * (1 - sT)})`;
-            ctx.lineWidth = 1;
-            ctx.stroke();
-          }
-        }
-      }
-
-      if (t > T.title) finish();
-    }
-
-    /** Заставка растворяется, обычный launch-экран проявляется поверх. */
-    function finish() {
+    // Фаза 1: частицы собираются в название, оно проявляется и светится.
+    later(() => {
+      if (done) return;
+      try { if (engineOn && typeof ps5Engine !== 'undefined') ps5Engine.gather(); } catch (e) {}
+      word.classList.add('boot-in', 'boot-glow');
+    }, T.hold);
+    // Фаза 2: холд — название светится, пыль держится вокруг него.
+    later(() => { if (!done) { word.classList.remove('boot-in'); word.classList.add('boot-hold'); } },
+      T.hold + T.logoIn + 60);
+    // Фаза 3: название гаснет, частицы рассыпаются по экрану и остаются
+    // плавать на окне входа (движок не перезапускается).
+    const finish = (fast) => {
       if (done) return;
       done = true;
-      cancelAnimationFrame(raf);
+      timers.forEach(clearTimeout);
+      try { if (engineOn && typeof ps5Engine !== 'undefined') ps5Engine.release(); } catch (e) {}
+      word.classList.remove('boot-in', 'boot-hold', 'boot-glow');
       word.classList.add('boot-gone');
-      canvas.classList.add('boot-fade');
-      view.classList.add('boot-lit');
-      setTimeout(() => {
-        canvas.remove();
+      view.classList.add('boot-lit', 'from-boot');
+      later(() => {
         word.remove();
         view.classList.remove('boot-run', 'boot-lit');
-      }, 1400);
-      removeEventListener('resize', resize);
-      document.removeEventListener('pointerdown', finish, true);
-      document.removeEventListener('keydown', finish, true);
-    }
+        // from-boot снимаем с задержкой, чтобы riseIn-каскад не сработал ретроспективно.
+        setTimeout(() => view.classList.remove('from-boot'), fast ? 100 : T.enter + 200);
+        // Порядок как у PS5: сплэш → окно входа → приложение.
+        try { enterAccounts(); } catch (e) {}
+        // Плитки красились под сплэшем (анимации входа уже отыграли вхолостую) —
+        // перезапускаем каскад, чтобы вход выглядел входом.
+        try {
+          const av = document.getElementById('accountView');
+          if (av && !av.hidden && view.classList.contains('account-mode')) {
+            const tiles = av.querySelectorAll('.account-tile');
+            tiles.forEach((t) => { t.style.animation = 'none'; });
+            void av.offsetWidth;
+            tiles.forEach((t) => { t.style.animation = ''; });
+          }
+        } catch (e) {}
+      }, fast ? 350 : T.out);
+      document.removeEventListener('pointerdown', onSkip, true);
+      document.removeEventListener('keydown', onSkip, true);
+    };
+    const onSkip = () => finish(true);
 
-    document.addEventListener('pointerdown', finish, true);
-    document.addEventListener('keydown', finish, true);
-    raf = requestAnimationFrame(loop);
-    setTimeout(finish, T.out + 2000);   // страховка от залипания
+    document.addEventListener('pointerdown', onSkip, true);
+    document.addEventListener('keydown', onSkip, true);
+    later(() => finish(false), T.hold + T.logoIn + T.stay + T.out + 400);   // страховка от залипания
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
